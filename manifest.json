@@ -1,0 +1,7 @@
+{
+    "domain": "life360e",
+    "name": "Entity-based Life360",
+    "config_flow": true,
+    "version": "0.0.1",
+    "requirements": ["life360==4.1.1"]
+}

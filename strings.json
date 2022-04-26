@@ -1,0 +1,53 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configure Life360 Account",
+        "data": {
+          "username": "[%key:common::config_flow::data::username%]",
+          "password": "[%key:common::config_flow::data::password%]",
+          "use_prefix": "Use an object ID prefix",
+          "prefix": "Entity namespace",
+          "limit_gps_acc": "Limit GPS accuracy",
+          "max_gps_accuracy": "Max GPS accuracy (meters)",
+          "set_drive_speed": "Set driving speed threshold",
+          "driving_speed": "Driving speed",
+          "interval_seconds": "Life360 server query period (seconds)"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Life360 Account",
+        "data": {
+          "password": "[%key:common::config_flow::data::password%]"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
+      "already_configured": "[%key:common::config_flow::abort::already_configured_account%]",
+      "comm_error": "Trouble communicating with Life360 server",
+      "unknown": "[%key:common::config_flow::error::unknown%]"
+    },
+    "abort": {
+      "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
+      "already_configured": "[%key:common::config_flow::abort::already_configured_account%]",
+      "reauth_successful": "Re-authentication was successful."
+    }
+  },
+  "options": {
+    "step": {
+      "account_options": {
+        "title": "Account Options",
+        "data": {
+          "use_prefix": "Use an object ID prefix",
+          "prefix": "Entity namespace",
+          "limit_gps_acc": "Limit GPS accuracy",
+          "max_gps_accuracy": "Max GPS accuracy (meters)",
+          "set_drive_speed": "Set driving speed threshold",
+          "driving_speed": "Driving speed",
+          "interval_seconds": "Life360 server query period (seconds)"
+        }
+      }
+    }
+  }
+}
