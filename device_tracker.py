@@ -61,32 +61,18 @@ async def async_setup_entry(
     account = hass.data[DOMAIN]["accounts"][entry.unique_id]
     coordinator = account["coordinator"]
     tracked_members = hass.data[DOMAIN]["tracked_members"]
-    included_circles_members = set()
     logged_circles = []
     logged_places = []
     logged_members = []
-
-    def _include_name(filter: dict[str, bool | list[str]], name: str) -> bool:
-        return True
 
     @callback
     def process_data() -> None:
         for circle_id, circle in coordinator.data["circles"].items():
             circle_name = circle["name"]
             circle_desc = f"Circle {circle_name} from account {entry.unique_id}"
-            incl_circle = _include_name({}, circle_name)
             if circle_id not in logged_circles:
                 logged_circles.append(circle_id)
-                LOGGER.info(
-                    "%s: will%s be included",
-                    circle_desc,
-                    "" if incl_circle else " NOT",
-                )
-
-            if not incl_circle:
-                continue
-
-            included_circles_members.update(circle["members"])
+                LOGGER.info("%s: will be included", circle_desc)
 
             new_places = []
             for place_id, place in circle["places"].items():
@@ -106,11 +92,7 @@ async def async_setup_entry(
         new_entities = []
         for member_id, member in coordinator.data["members"].items():
             member_name = member[ATTR_NAME]
-            incl_member = (
-                member_id in included_circles_members
-                and member_id not in tracked_members
-                and _include_name({}, member_name)
-            )
+            incl_member = member_id not in tracked_members
             if member_id not in logged_members:
                 logged_members.append(member_id)
                 LOGGER.info(
