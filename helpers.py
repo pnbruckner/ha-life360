@@ -3,7 +3,7 @@
 from __future__ import annotations
 from curses.ascii import SP
 
-from typing import Any, Callable, cast, TypedDict
+from typing import Any, Callable, TypedDict
 
 from life360 import Life360, Life360Error, LoginError
 
@@ -36,7 +36,6 @@ from .const import (
     ATTR_WIFI_ON,
     COMM_MAX_RETRIES,
     COMM_TIMEOUT,
-    DOMAIN,
     LOGGER,
     SPEED_DIGITS,
     SPEED_FACTOR_MPH,
