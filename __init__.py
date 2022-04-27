@@ -33,7 +33,7 @@ from .const import (
     LOGGER,
     OPTIONS,
 )
-from .helpers import AccountData, get_life360_api, get_life360_data, init_integ_data
+from .helpers import AccountData, get_life360_api, get_life360_data, IntegData
 
 
 PLATFORMS = [Platform.DEVICE_TRACKER]
@@ -96,9 +96,12 @@ def _update_interval(entry: ConfigEntry) -> timedelta:
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up integration."""
     config = config[DOMAIN]
-    options = {k: config[k] for k in OPTIONS if config.get(k) is not None}
-
     # LOGGER.debug("async_setup called: %s", config)
+    config_options = {k: config[k] for k in OPTIONS if config.get(k) is not None}
+
+    hass.data[DOMAIN] = IntegData(
+        config_options=config_options, accounts={}, tracked_members=[]
+    )
 
     accounts = {
         account[CONF_USERNAME].lower(): account for account in config[CONF_ACCOUNTS]
@@ -106,20 +109,31 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     # Check existing entries against config accounts.
     for entry in hass.config_entries.async_entries(DOMAIN):
+        # Entry will not have been migrated yet.
+        if entry.version == 1:
+            unique_id = entry.data[CONF_USERNAME].lower()
+            options_ok = True
+        else:
+            unique_id = entry.unique_id
+            options_ok = all(
+                entry.options.get(k) == config_options.get(k) for k in OPTIONS
+            )
+
         if entry.source == SOURCE_IMPORT:
             if (
-                entry.unique_id not in accounts
-                or entry.data[CONF_PASSWORD] != accounts[entry.unique_id][CONF_PASSWORD]
-                or any(entry.options.get(k) != options.get(k) for k in OPTIONS)
+                unique_id in accounts
+                and entry.data[CONF_PASSWORD] == accounts[unique_id][CONF_PASSWORD]
+                and options_ok
             ):
+                # Entry still valid (although it may need to be migrated), no need to
+                # create one.
+                del accounts[unique_id]
+            else:
                 # No longer in config, or password or options have changed.
                 await hass.config_entries.async_remove(entry.entry_id)
-                # LOGGER.debug("Removed: %s", entry.unique_id)
-            else:
-                # Entry still valid, no need to create one.
-                del accounts[entry.unique_id]
-        elif entry.unique_id in accounts:
-            account = accounts.pop(entry.unique_id)
+                # LOGGER.debug("Removed: %s", unique_id)
+        elif unique_id in accounts:
+            account = accounts.pop(unique_id)
             LOGGER.warning(
                 "Skipping account %s from configuration: "
                 "Credentials already configured in frontend",
@@ -132,7 +146,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         hass.async_create_task(
             hass.config_entries.flow.async_init(
                 DOMAIN,
-                context={"source": SOURCE_IMPORT, "options": options},
+                context={"source": SOURCE_IMPORT, "options": config_options},
                 data=account,
             )
         )
@@ -140,11 +154,27 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate config entry."""
+    LOGGER.debug("Migrating config entry from version %s", entry.version)
+
+    if entry.version == 1:
+        entry.version = 2
+        hass.config_entries.async_update_entry(
+            entry,
+            unique_id=entry.data[CONF_USERNAME].lower(),
+            options=hass.data[DOMAIN]["config_options"],
+        )
+
+    LOGGER.info("Config entry migration to version %s successful", entry.version)
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up config entry."""
     # LOGGER.debug("__init__.async_setup_entry called: %s", entry.as_dict())
 
-    account = init_integ_data(hass)["accounts"].setdefault(
+    account = hass.data[DOMAIN]["accounts"].setdefault(
         cast(str, entry.unique_id), AccountData()
     )
 

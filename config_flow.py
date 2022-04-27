@@ -40,12 +40,7 @@ from .const import (
     LOGGER,
     OPTIONS,
 )
-from .helpers import (
-    AccountData,
-    get_life360_api,
-    get_life360_authorization,
-    init_integ_data,
-)
+from .helpers import AccountData, get_life360_api, get_life360_authorization
 
 
 _IMPORT_RETRY_PERIOD = 10
@@ -84,7 +79,7 @@ class Life360eConfigFlow(ConfigFlow, domain=DOMAIN):
         self._reauth_entry: ConfigEntry | None = None
         self._first_reauth_confirm = True
 
-    VERSION = 1
+    VERSION = 2
 
     @staticmethod
     @callback
@@ -158,7 +153,7 @@ class Life360eConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
             return self.async_abort(reason="reauth_successful")
 
-        init_integ_data(self.hass)["accounts"][cast(str, self.unique_id)] = AccountData(
+        self.hass.data[DOMAIN]["accounts"][cast(str, self.unique_id)] = AccountData(
             api=self._api
         )
         title = cast(str, self.unique_id)

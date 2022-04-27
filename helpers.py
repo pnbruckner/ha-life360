@@ -55,16 +55,9 @@ class AccountData(TypedDict, total=False):
 class IntegData(TypedDict):
     """Integration data."""
 
+    config_options: dict[str, Any]
     accounts: dict[str, AccountData]
     tracked_members: list[str]
-
-
-def init_integ_data(hass: HomeAssistant) -> IntegData:
-    """Initialize domain's hass data if necessary."""
-    return cast(
-        IntegData,
-        hass.data.setdefault(DOMAIN, IntegData(accounts={}, tracked_members=[])),
-    )
 
 
 def get_life360_api(authorization: str | None = None) -> Life360:
