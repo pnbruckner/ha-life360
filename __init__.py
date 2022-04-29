@@ -104,7 +104,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         accounts={},
         tracked_members={},
         logged_circles=[],
-        logged_places=[]
+        logged_places=[],
     )
 
     config_accounts = {

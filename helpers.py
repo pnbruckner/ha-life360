@@ -145,10 +145,9 @@ async def get_life360_data(
             # could be retrieved more than once (i.e., once per Circle.) If their data
             # was already retrieved and it's just as recent as the last data retrieved,
             # then skip the "new" data (since it's not actually any newer.)
-            if (
-                (existing_entry := data["members"].get(member_id))
-                and existing_entry[ATTR_LAST_SEEN] >= last_seen
-            ):
+            if (existing_entry := data["members"].get(member_id)) and existing_entry[
+                ATTR_LAST_SEEN
+            ] >= last_seen:
                 continue
 
             first = member["firstName"]

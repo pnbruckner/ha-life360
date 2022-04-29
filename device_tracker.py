@@ -120,6 +120,20 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
         self._attr_name = self._data[ATTR_NAME]
         self._attr_entity_picture = self._data[ATTR_ENTITY_PICTURE]
 
+        self._prev_data = self._filtered_data()
+
+    def _filtered_data(self) -> dict[str, Any]:
+        # Filter out data that will be ignored when seeing if anything has changed since
+        # last update. For now that's address, since that often constantly changes (back
+        # and forth between two values), even when nothing else changes. If we don't
+        # filter it out, there will be way more state changes which would basically be
+        # useless (and spam the database, and possibly the log.)
+        return {k: v for k, v in self._data.items() if k != ATTR_ADDRESS}
+
+    @property
+    def _options(self) -> Mapping[str, Any]:
+        return cast(Mapping[str, Any], self.coordinator.config_entry.options)
+
     @callback
     def add_to_platform_start(
         self,
@@ -129,9 +143,7 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
     ) -> None:
         """Start adding an entity to a platform."""
         # LOGGER.debug("add_to_platform_start called: %s", self.unique_id)
-        platform.entity_namespace = self.coordinator.config_entry.options.get(
-            CONF_PREFIX
-        )
+        platform.entity_namespace = self._options.get(CONF_PREFIX)
         super().add_to_platform_start(hass, platform, parallel_updates)
 
     # async def async_will_remove_from_hass(self) -> None:
@@ -151,16 +163,42 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
         # update, or that there is even data for this member every update, so need to
         # update shortcut each time.
         self._data = self.coordinator.data["members"].get(self.unique_id)
-        # Skip update if max GPS accuracy exceeded.
-        max_gps_acc = self.coordinator.config_entry.options.get(CONF_MAX_GPS_ACCURACY)
-        if max_gps_acc is not None and self.location_accuracy > max_gps_acc:
-            LOGGER.warning(
-                "%s: Ignoring update because expected GPS accuracy (%i) is not met: %i",
-                self.entity_id,
-                max_gps_acc,
-                self.location_accuracy,
+
+        if self.available:
+            # If nothing important has changed, then skip the update altogether.
+            if self._filtered_data() == self._prev_data:
+                return
+
+            # Check if we should effectively throw out new location data.
+            last_seen = self._data[ATTR_LAST_SEEN]
+            prev_seen = self._prev_data[ATTR_LAST_SEEN]
+            max_gps_acc = self._options.get(CONF_MAX_GPS_ACCURACY)
+            bad_last_seen = last_seen < prev_seen
+            bad_accuracy = (
+                max_gps_acc is not None and self.location_accuracy > max_gps_acc
             )
-            return
+            if bad_last_seen or bad_accuracy:
+                if bad_last_seen:
+                    LOGGER.warning(
+                        "%s: Ignoring location update because "
+                        "last_seen (%s) < previous last_seen (%s)",
+                        self.entity_id,
+                        last_seen,
+                        prev_seen,
+                    )
+                if bad_accuracy:
+                    LOGGER.warning(
+                        "%s: Ignoring location update because "
+                        "expected GPS accuracy (%i) is not met: %i",
+                        self.entity_id,
+                        max_gps_acc,
+                        self.location_accuracy,
+                    )
+                for k in (ATTR_LATITUDE, ATTR_LONGITUDE, ATTR_GPS_ACCURACY):
+                    self._data[k] = self._prev_data[k]
+
+            self._prev_data = self._filtered_data()
+
         super()._handle_coordinator_update()
 
     @property
@@ -221,7 +259,7 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
             for k, v in self._data.items()
             if k in _EXTRA_ATTRIBUTES and v is not None
         }
-        driving_speed = self.coordinator.config_entry.options.get(CONF_DRIVING_SPEED)
+        driving_speed = self._options.get(CONF_DRIVING_SPEED)
         if driving_speed is not None:
             attrs[ATTR_DRIVING] = attrs[ATTR_DRIVING] or (
                 attrs[ATTR_SPEED] > driving_speed
