@@ -61,27 +61,23 @@ async def async_setup_entry(
     account = hass.data[DOMAIN]["accounts"][entry.unique_id]
     coordinator = account["coordinator"]
     tracked_members = hass.data[DOMAIN]["tracked_members"]
-    logged_circles = []
-    logged_places = []
-    logged_members = []
+    logged_circles = hass.data[DOMAIN]["logged_circles"]
+    logged_places = hass.data[DOMAIN]["logged_places"]
 
     @callback
-    def process_data() -> None:
+    def process_data(new_members_only: bool = True) -> None:
         for circle_id, circle in coordinator.data["circles"].items():
-            circle_name = circle["name"]
-            circle_desc = f"Circle {circle_name} from account {entry.unique_id}"
             if circle_id not in logged_circles:
                 logged_circles.append(circle_id)
-                LOGGER.info("%s: will be included", circle_desc)
+                LOGGER.info("Circle: %s", circle["name"])
 
             new_places = []
             for place_id, place in circle["places"].items():
-                if place_id in logged_places:
-                    continue
-                logged_places.append(place_id)
-                new_places.append(place)
+                if place_id not in logged_places:
+                    logged_places.append(place_id)
+                    new_places.append(place)
             if new_places:
-                msg = f"{circle_desc}: Places:"
+                msg = f"Places from {circle['name']}:"
                 for place in new_places:
                     msg += f"\n- name: {place['name']}"
                     msg += f"\n  latitude: {place['latitude']}"
@@ -91,25 +87,24 @@ async def async_setup_entry(
 
         new_entities = []
         for member_id, member in coordinator.data["members"].items():
-            member_name = member[ATTR_NAME]
-            incl_member = member_id not in tracked_members
-            if member_id not in logged_members:
-                logged_members.append(member_id)
-                LOGGER.info(
-                    "%s: will%s be tracked via account %s",
-                    member_name,
-                    "" if incl_member else " NOT",
-                    entry.unique_id,
-                )
+            tracked_by_account = tracked_members.get(member_id)
+            if (new_member := not tracked_by_account) :
+                tracked_members[member_id] = entry.unique_id
+                LOGGER.info("Member: %s", member[ATTR_NAME])
+            if (
+                new_member
+                or tracked_by_account == entry.unique_id
+                and not new_members_only
+            ):
+                new_entities.append(Life360DeviceTracker(coordinator, member_id))
+        if new_entities:
+            # LOGGER.debug(
+            #     "Calling async_add_entities: %s",
+            #     [entity.unique_id for entity in new_entities],
+            # )
+            async_add_entities(new_entities)
 
-            if not incl_member:
-                continue
-
-            tracked_members.append(member_id)
-            new_entities.append(Life360DeviceTracker(coordinator, member_id))
-        async_add_entities(new_entities)
-
-    process_data()
+    process_data(new_members_only=False)
     account["unsub"] = coordinator.async_add_listener(process_data)
 
 
@@ -133,15 +128,21 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
         parallel_updates: asyncio.Semaphore | None,
     ) -> None:
         """Start adding an entity to a platform."""
+        # LOGGER.debug("add_to_platform_start called: %s", self.unique_id)
         platform.entity_namespace = self.coordinator.config_entry.options.get(
             CONF_PREFIX
         )
         super().add_to_platform_start(hass, platform, parallel_updates)
 
-    async def async_will_remove_from_hass(self) -> None:
-        """Run when entity will be removed from hass."""
-        await super().async_will_remove_from_hass()
-        self.hass.data[DOMAIN]["tracked_members"].remove(self.unique_id)
+    # async def async_will_remove_from_hass(self) -> None:
+    #     """Run when entity will be removed from hass."""
+    #     LOGGER.debug("async_will_remove_from_hass called: %s", self.unique_id)
+    #     await super().async_will_remove_from_hass()
+
+    # async def async_removed_from_registry(self) -> None:
+    #     """Run when entity has been removed from entity registry."""
+    #     LOGGER.debug("async_removed_from_registry called: %s", self.unique_id)
+    #     await super().async_removed_from_registry()
 
     @callback
     def _handle_coordinator_update(self) -> None:

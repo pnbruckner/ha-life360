@@ -54,9 +54,13 @@ class AccountData(TypedDict, total=False):
 class IntegData(TypedDict):
     """Integration data."""
 
-    config_options: dict[str, Any]
+    options: dict[str, Any]
+    # ConfigEntry.unique_id: AccountData
     accounts: dict[str, AccountData]
-    tracked_members: list[str]
+    # member_id: ConfigEntry.unique_id
+    tracked_members: dict[str, str]
+    logged_circles: list[str]
+    logged_places: list[str]
 
 
 def get_life360_api(authorization: str | None = None) -> Life360:

@@ -15,7 +15,6 @@ from homeassistant.config_entries import (
     ConfigFlow,
     OptionsFlow,
     SOURCE_IMPORT,
-    # SOURCE_REAUTH,
 )
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback

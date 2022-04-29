@@ -97,14 +97,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up integration."""
     config = config[DOMAIN]
     # LOGGER.debug("async_setup called: %s", config)
-    config_options = {k: config[k] for k in OPTIONS if config.get(k) is not None}
+    options = {k: config[k] for k in OPTIONS if config.get(k) is not None}
 
     hass.data[DOMAIN] = IntegData(
-        config_options=config_options, accounts={}, tracked_members=[]
+        options=options,
+        accounts={},
+        tracked_members={},
+        logged_circles=[],
+        logged_places=[]
     )
 
-    accounts = {
-        account[CONF_USERNAME].lower(): account for account in config[CONF_ACCOUNTS]
+    config_accounts = {
+        config_account[CONF_USERNAME].lower(): config_account
+        for config_account in config[CONF_ACCOUNTS]
     }
 
     # Check existing entries against config accounts.
@@ -112,42 +117,45 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         # Entry will not have been migrated yet.
         if entry.version == 1:
             unique_id = entry.data[CONF_USERNAME].lower()
-            options_ok = True
+            options_changed = False
         else:
             unique_id = entry.unique_id
-            options_ok = all(
-                entry.options.get(k) == config_options.get(k) for k in OPTIONS
-            )
+            options_changed = options != cast(dict, entry.options)
+        config_account = config_accounts.get(unique_id)
 
         if entry.source == SOURCE_IMPORT:
-            if (
-                unique_id in accounts
-                and entry.data[CONF_PASSWORD] == accounts[unique_id][CONF_PASSWORD]
-                and options_ok
-            ):
-                # Entry still valid (although it may need to be migrated), no need to
-                # create one.
-                del accounts[unique_id]
+            if config_account:
+                if entry.data[CONF_PASSWORD] != (pwd := config_account[CONF_PASSWORD]):
+                    # LOGGER.debug("async_setup: %s password changed", unique_id)
+                    hass.config_entries.async_update_entry(
+                        entry, data=entry.data | {CONF_PASSWORD: pwd}
+                    )
+                if options_changed:
+                    # LOGGER.debug("async_setup: %s options changed", unique_id)
+                    hass.config_entries.async_update_entry(entry, options=options)
+                # Entry is now up to date with config (although it may still need to be
+                # migrated), no need to create a new entry.
+                del config_accounts[unique_id]
             else:
-                # No longer in config, or password or options have changed.
+                # No longer in config.
                 await hass.config_entries.async_remove(entry.entry_id)
-                # LOGGER.debug("Removed: %s", unique_id)
-        elif unique_id in accounts:
-            account = accounts.pop(unique_id)
+                # LOGGER.debug("Removed: %s", entry.as_dict())
+        elif config_account:
             LOGGER.warning(
                 "Skipping account %s from configuration: "
                 "Credentials already configured in frontend",
-                account[CONF_USERNAME],
+                config_account[CONF_USERNAME],
             )
+            del config_accounts[unique_id]
 
     # Initiate import config flow for any accounts in config that do not already have
     # a valid entry.
-    for account in accounts.values():
+    for config_account in config_accounts.values():
         hass.async_create_task(
             hass.config_entries.flow.async_init(
                 DOMAIN,
-                context={"source": SOURCE_IMPORT, "options": config_options},
-                data=account,
+                context={"source": SOURCE_IMPORT, "options": options},
+                data=config_account,
             )
         )
 
@@ -157,15 +165,17 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate config entry."""
     LOGGER.debug("Migrating config entry from version %s", entry.version)
+    # LOGGER.debug("Before: %s", entry.as_dict())
 
     if entry.version == 1:
         entry.version = 2
         hass.config_entries.async_update_entry(
             entry,
             unique_id=entry.data[CONF_USERNAME].lower(),
-            options=hass.data[DOMAIN]["config_options"],
+            options=hass.data[DOMAIN]["options"],
         )
 
+    # LOGGER.debug("After: %s", entry.as_dict())
     LOGGER.info("Config entry migration to version %s successful", entry.version)
     return True
 
@@ -212,7 +222,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload config entry."""
-    # LOGGER.debug("async_unload_entry called: %s", entry.unique_id)
+    # LOGGER.debug("async_unload_entry called: %s", entry.as_dict())
 
     # Unload components for our platforms.
     # But first stop checking for new members on update.
@@ -223,7 +233,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Remove config entry."""
-    # LOGGER.debug("async_remove_entry called: %s", entry.unique_id)
+    # LOGGER.debug("async_remove_entry called: %s", entry.as_dict())
 
     try:
         del hass.data[DOMAIN]["accounts"][entry.unique_id]
@@ -233,7 +243,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options update."""
-    # LOGGER.debug("async_update_options called: %s", entry.unique_id)
+    # LOGGER.debug("async_update_options called: %s", entry.as_dict())
     account = hass.data[DOMAIN]["accounts"][entry.unique_id]
     account["coordinator"].update_interval = _update_interval(entry)
     if account.pop("re_add_entry", False):
