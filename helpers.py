@@ -133,13 +133,23 @@ async def get_life360_data(
         }
 
         for member in circle_members:
-            member_id = member["id"]
-            if member_id in data["members"] or not int(
-                member["features"]["shareLocation"]
-            ):
+            # Member isn't sharing location.
+            if not int(member["features"]["shareLocation"]):
                 continue
 
+            member_id = member["id"]
             loc = member["location"]
+            last_seen = dt_util.utc_from_timestamp(int(loc["timestamp"]))
+
+            # It's possible for a Member to be in more than one Circle, so their data
+            # could be retrieved more than once (i.e., once per Circle.) If their data
+            # was already retrieved and it's just as recent as the last data retrieved,
+            # then skip the "new" data (since it's not actually any newer.)
+            if (
+                (existing_entry := data["members"].get(member_id))
+                and existing_entry[ATTR_LAST_SEEN] >= last_seen
+            ):
+                continue
 
             first = member["firstName"]
             last = member["lastName"]
@@ -160,7 +170,7 @@ async def get_life360_data(
                 else:
                     address = address1 or address2
 
-            speed = float(loc["speed"]) * SPEED_FACTOR_MPH
+            speed = max(0, float(loc["speed"]) * SPEED_FACTOR_MPH)
             if hass.config.units.is_metric:
                 speed = convert(speed, LENGTH_MILES, LENGTH_KILOMETERS)
 
@@ -176,7 +186,7 @@ async def get_life360_data(
                 ATTR_GPS_ACCURACY: round(
                     convert(float(loc["accuracy"]), LENGTH_FEET, LENGTH_METERS)
                 ),
-                ATTR_LAST_SEEN: dt_util.utc_from_timestamp(int(loc["timestamp"])),
+                ATTR_LAST_SEEN: last_seen,
                 ATTR_LATITUDE: float(loc["latitude"]),
                 ATTR_LONGITUDE: float(loc["longitude"]),
                 ATTR_NAME: name,
