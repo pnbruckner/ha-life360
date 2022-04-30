@@ -7,7 +7,7 @@ from homeassistant.components.device_tracker.const import SCAN_INTERVAL
 from homeassistant.const import CONF_PREFIX
 
 
-DOMAIN = "life360e"
+DOMAIN = __package__.rsplit(".", 1)[-1]
 LOGGER = logging.getLogger(__package__)
 
 COMM_MAX_RETRIES = 2

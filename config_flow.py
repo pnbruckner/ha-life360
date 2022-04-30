@@ -66,7 +66,7 @@ def password_schema(
     return {vol.Required(CONF_PASSWORD, default=def_password): cv.string}
 
 
-class Life360eConfigFlow(ConfigFlow, domain=DOMAIN):
+class Life360ConfigFlow(ConfigFlow, domain=DOMAIN):
     """Life360 integration config flow."""
 
     def __init__(self) -> None:
@@ -81,9 +81,9 @@ class Life360eConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(entry: ConfigEntry) -> Life360eOptionsFlow:
+    def async_get_options_flow(entry: ConfigEntry) -> Life360OptionsFlow:
         """Get the options flow for this handler."""
-        return Life360eOptionsFlow(entry)
+        return Life360OptionsFlow(entry)
 
     @classmethod
     @callback
@@ -254,7 +254,7 @@ class Life360eConfigFlow(ConfigFlow, domain=DOMAIN):
             await sleep(_IMPORT_RETRY_PERIOD)
 
 
-class Life360eOptionsFlow(OptionsFlow):
+class Life360OptionsFlow(OptionsFlow):
     """Life360 integration options flow."""
 
     def __init__(self, entry: ConfigEntry) -> None:
