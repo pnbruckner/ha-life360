@@ -1,4 +1,4 @@
-"""Life360 Config Flow."""
+"""Config flow to configure Life360 integration."""
 
 from __future__ import annotations
 
@@ -69,6 +69,8 @@ def password_schema(
 class Life360ConfigFlow(ConfigFlow, domain=DOMAIN):
     """Life360 integration config flow."""
 
+    VERSION = 2
+
     def __init__(self) -> None:
         """Initialize."""
         self._username: str | vol.UNDEFINED = vol.UNDEFINED
@@ -76,8 +78,6 @@ class Life360ConfigFlow(ConfigFlow, domain=DOMAIN):
         self._api: Life360 | None = None
         self._reauth_entry: ConfigEntry | None = None
         self._first_reauth_confirm = True
-
-    VERSION = 2
 
     @staticmethod
     @callback

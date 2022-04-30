@@ -1,4 +1,4 @@
-"""Life360 Device Tracker platform."""
+"""Support for Life360 device tracking."""
 
 from __future__ import annotations
 

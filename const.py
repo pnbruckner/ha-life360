@@ -1,4 +1,4 @@
-"""Life360 integration constants."""
+"""Constants for Life360 integration."""
 
 import logging
 
@@ -7,7 +7,7 @@ from homeassistant.components.device_tracker.const import SCAN_INTERVAL
 from homeassistant.const import CONF_PREFIX
 
 
-DOMAIN = __package__.rsplit(".", 1)[-1]
+DOMAIN = "life360"
 LOGGER = logging.getLogger(__package__)
 
 COMM_MAX_RETRIES = 2

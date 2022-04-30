@@ -1,4 +1,4 @@
-"""Life360 entity-based integration."""
+"""Life360 integration."""
 
 from __future__ import annotations
 
