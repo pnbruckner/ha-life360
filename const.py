@@ -37,5 +37,3 @@ CONF_MEMBERS = "members"
 CONF_WARNING_THRESHOLD = "warning_threshold"
 
 OPTIONS = (CONF_DRIVING_SPEED, CONF_MAX_GPS_ACCURACY, CONF_PREFIX, CONF_SCAN_INTERVAL)
-
-DOCS_URL = "https://www.home-assistant.io/integrations/life360"

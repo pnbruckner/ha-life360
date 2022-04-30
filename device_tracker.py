@@ -57,7 +57,6 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up the device tracker platform."""
-    # LOGGER.debug("device_tracker.async_setup_entry called: %s", entry.as_dict())
     account = hass.data[DOMAIN]["accounts"][entry.unique_id]
     coordinator = account["coordinator"]
     tracked_members = hass.data[DOMAIN]["tracked_members"]
@@ -66,6 +65,7 @@ async def async_setup_entry(
 
     @callback
     def process_data(new_members_only: bool = True) -> None:
+        """Process new Life360 data."""
         for circle_id, circle in coordinator.data["circles"].items():
             if circle_id not in logged_circles:
                 logged_circles.append(circle_id)
@@ -98,10 +98,6 @@ async def async_setup_entry(
             ):
                 new_entities.append(Life360DeviceTracker(coordinator, member_id))
         if new_entities:
-            # LOGGER.debug(
-            #     "Calling async_add_entities: %s",
-            #     [entity.unique_id for entity in new_entities],
-            # )
             async_add_entities(new_entities)
 
     process_data(new_members_only=False)
@@ -112,9 +108,11 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
     """Life360 Device Tracker."""
 
     def __init__(self, coordinator: DataUpdateCoordinator, member_id: str) -> None:
+        """Initialize Life360 Entity."""
         super().__init__(coordinator)
         self._attr_attribution = ATTRIBUTION
         self._attr_unique_id = member_id
+
         self._data = coordinator.data["members"][self.unique_id]
 
         self._attr_name = self._data[ATTR_NAME]
@@ -123,15 +121,16 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
         self._prev_data = self._filtered_data()
 
     def _filtered_data(self) -> dict[str, Any]:
-        # Filter out data that will be ignored when seeing if anything has changed since
-        # last update. For now that's address, since that often constantly changes (back
-        # and forth between two values), even when nothing else changes. If we don't
-        # filter it out, there will be way more state changes which would basically be
-        # useless (and spam the database, and possibly the log.)
+        # Filter out data that should be ignored when checking if anything has changed
+        # since last update. For now that's address, since that often constantly changes
+        # (back and forth between two values), even when nothing else changes. If it
+        # isn't filtered out, there will be way more state changes which would basically
+        # be useless (and spam the database, and possibly the log.)
         return {k: v for k, v in self._data.items() if k != ATTR_ADDRESS}
 
     @property
     def _options(self) -> Mapping[str, Any]:
+        """Shortcut to config entry options."""
         return cast(Mapping[str, Any], self.coordinator.config_entry.options)
 
     @callback
@@ -142,19 +141,8 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
         parallel_updates: asyncio.Semaphore | None,
     ) -> None:
         """Start adding an entity to a platform."""
-        # LOGGER.debug("add_to_platform_start called: %s", self.unique_id)
         platform.entity_namespace = self._options.get(CONF_PREFIX)
         super().add_to_platform_start(hass, platform, parallel_updates)
-
-    # async def async_will_remove_from_hass(self) -> None:
-    #     """Run when entity will be removed from hass."""
-    #     LOGGER.debug("async_will_remove_from_hass called: %s", self.unique_id)
-    #     await super().async_will_remove_from_hass()
-
-    # async def async_removed_from_registry(self) -> None:
-    #     """Run when entity has been removed from entity registry."""
-    #     LOGGER.debug("async_removed_from_registry called: %s", self.unique_id)
-    #     await super().async_removed_from_registry()
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -166,7 +154,7 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
 
         if self.available:
             # If nothing important has changed, then skip the update altogether.
-            if self._filtered_data() == self._prev_data:
+            if (filtered_data := self._filtered_data()) == self._prev_data:
                 return
 
             # Check if we should effectively throw out new location data.
@@ -197,7 +185,7 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
                 for k in (ATTR_LATITUDE, ATTR_LONGITUDE, ATTR_GPS_ACCURACY):
                     self._data[k] = self._prev_data[k]
 
-            self._prev_data = self._filtered_data()
+            self._prev_data = filtered_data
 
         super()._handle_coordinator_update()
 
@@ -219,7 +207,7 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
             self._attr_entity_picture = self._data[ATTR_ENTITY_PICTURE]
         return super().entity_picture
 
-    # All of the following will only be called if self.available.
+    # All of the following will only be called if self.available is True.
 
     @property
     def battery_level(self) -> int | None:

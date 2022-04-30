@@ -34,7 +34,6 @@ from .const import (
     CONF_PREFIX,
     CONF_SCAN_INTERVAL,
     DEFAULT_SCAN_INTERVAL_SEC,
-    DOCS_URL,
     DOMAIN,
     LOGGER,
     OPTIONS,
@@ -63,7 +62,7 @@ def account_schema(
 def password_schema(
     def_password: str | vol.UNDEFINED = vol.UNDEFINED,
 ) -> dict[Any, Callable[[Any], str]]:
-    """Return schema for an account with optional default values."""
+    """Return schema for a password with optional default value."""
     return {vol.Required(CONF_PASSWORD, default=def_password): cv.string}
 
 
@@ -93,20 +92,16 @@ class Life360eConfigFlow(ConfigFlow, domain=DOMAIN):
         return entry.source != SOURCE_IMPORT
 
     @property
-    def options(self) -> Mapping[str, Any]:
+    def _options(self) -> Mapping[str, Any]:
         """Options for new config entry."""
         return cast(Mapping[str, Any], self.context.setdefault("options", {}))
 
-    @options.setter
-    def options(self, options: Mapping[str, Any]) -> None:
+    @_options.setter
+    def _options(self, options: Mapping[str, Any]) -> None:
         self.context["options"] = options
-
-    def _flow_params(self) -> str:
-        return f"{' '*20} >>>>> {self.flow_id}, {self.context}, {self.options}"
 
     async def _async_verify(self, step_id: str) -> FlowResult:
         """Attempt to authorize the provided credentials."""
-        # LOGGER.debug("_async_verify called: %s\n%s", step_id, self._flow_params())
 
         assert self._api
         assert self._username
@@ -116,12 +111,11 @@ class Life360eConfigFlow(ConfigFlow, domain=DOMAIN):
         authorization = await get_life360_authorization(
             self.hass, self._api, self._username, self._password, errors
         )
-        # LOGGER.debug("_async_verify: authorization: %s, errors: %s", authorization, errors)
         if errors:
             if step_id == "user":
                 schema = account_schema(
                     self._username, self._password
-                ) | _account_options_schema(self.options)
+                ) | _account_options_schema(self._options)
             else:
                 schema = password_schema(self._password)
             return self.async_show_form(
@@ -158,30 +152,21 @@ class Life360eConfigFlow(ConfigFlow, domain=DOMAIN):
         title = cast(str, self.unique_id)
         if self.source == SOURCE_IMPORT:
             title += " (from configuration)"
-        result = self.async_create_entry(
-            title=title,
-            data=data,
-            description_placeholders={"docs_url": DOCS_URL},
-            options=self.options,
-        )
-        # LOGGER.debug("async_create_entry result = %s", result)
-        return result
+        return self.async_create_entry(title=title, data=data, options=self._options)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle a config flow initiated by the user."""
-        # LOGGER.debug("async_step_user called: %s\n%s", user_input, self._flow_params())
-
         if not user_input:
             return self.async_show_form(
                 step_id="user",
                 data_schema=vol.Schema(
-                    account_schema() | _account_options_schema(self.options)
+                    account_schema() | _account_options_schema(self._options)
                 ),
             )
 
-        self.options = _process_account_options(user_input)
+        self._options = _extract_account_options(user_input)
 
         self._username = user_input[CONF_USERNAME]
         self._password = user_input[CONF_PASSWORD]
@@ -196,14 +181,10 @@ class Life360eConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_import(self, user_input: dict[str, Any]) -> FlowResult:
         """Handle a config flow from configuration."""
-        # LOGGER.debug("async_step_import called: %s\n%s", user_input, self._flow_params())
-
-        return await self._import(self.async_step_user, user_input | self.options)
+        return await self._import(self.async_step_user, user_input | self._options)
 
     async def async_step_reauth(self, user_input: dict[str, Any]) -> FlowResult:
         """Handle reauthorization."""
-        # LOGGER.debug("async_step_reauth called: %s\n%s", user_input, self._flow_params())
-
         self._username = user_input[CONF_USERNAME]
         self._api = self.hass.data[DOMAIN]["accounts"][self.unique_id]["api"]
         self._reauth_entry = self.hass.config_entries.async_get_entry(
@@ -219,7 +200,6 @@ class Life360eConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle reauthorization completion."""
-        # LOGGER.debug("async_step_reauth_confirm called: %s\n%s", user_input, self._flow_params())
         if not user_input:
             # Don't show current password the first time we prompt for password since
             # this will happen asynchronously. However, once the user enters a password,
@@ -240,12 +220,9 @@ class Life360eConfigFlow(ConfigFlow, domain=DOMAIN):
         user_input: dict[str, str],
     ) -> FlowResult:
         """Handle config flows from configuration."""
-        # LOGGER.debug("_import called: %s, %s\n%s", step_func, user_input, self._flow_params())
-
         while True:
             try:
                 result = await step_func(user_input)
-                # result = await self.async_step_user(user_input)
             except AbortFlow as exc:
                 reason = exc.reason
             else:
@@ -276,66 +253,6 @@ class Life360eConfigFlow(ConfigFlow, domain=DOMAIN):
             )
             await sleep(_IMPORT_RETRY_PERIOD)
 
-    # @callback
-    # def async_show_form(
-    #     self,
-    #     *,
-    #     step_id: str,
-    #     data_schema: vol.Schema | None = None,
-    #     errors: dict[str, str] | None = None,
-    #     description_placeholders: dict[str, Any] | None = None,
-    #     last_step: bool | None = None,
-    # ) -> FlowResult:
-    #     """Return the definition of a form to gather user input."""
-    #     LOGGER.debug(
-    #         "async_show_form called: step_id: %s, errors: %s, last_step: %s\n%s",
-    #         step_id, errors, last_step, self._flow_params()
-    #     )
-    #     return super().async_show_form(
-    #         step_id=step_id,
-    #         data_schema=data_schema,
-    #         errors=errors,
-    #         description_placeholders=description_placeholders,
-    #         last_step=last_step
-    #     )
-
-    # @callback
-    # def async_create_entry(
-    #     self,
-    #     *,
-    #     title: str,
-    #     data: Mapping[str, Any],
-    #     description: str | None = None,
-    #     description_placeholders: dict | None = None,
-    #     options: Mapping[str, Any] | None = None,
-    # ) -> FlowResult:
-    #     """Finish config flow and create a config entry."""
-    #     LOGGER.debug(
-    #         "async_create_entry called: title: %s, data: %s, options: %s\n%s",
-    #         title, data, options, self._flow_params()
-    #     )
-    #     return super().async_create_entry(
-    #         title=title,
-    #         data=data,
-    #         description=description,
-    #         description_placeholders=description_placeholders,
-    #         options=options,
-    #     )
-
-    # @callback
-    # def async_abort(
-    #     self, *, reason: str, description_placeholders: dict | None = None
-    # ) -> FlowResult:
-    #     """Abort the config flow."""
-    #     LOGGER.debug(
-    #         "async_abort called: reason: %s\n%s",
-    #         reason, self._flow_params()
-    #     )
-    #     return super().async_abort(
-    #         reason=reason,
-    #         description_placeholders=description_placeholders,
-    #     )
-
 
 class Life360eOptionsFlow(OptionsFlow):
     """Life360 integration options flow."""
@@ -343,28 +260,21 @@ class Life360eOptionsFlow(OptionsFlow):
     def __init__(self, entry: ConfigEntry) -> None:
         """Initialize."""
         self.entry = entry
-        # self.options = dict(entry.options)
-
-    def _flow_params(self) -> str:
-        return f"{' '*20} >>>>> {self.flow_id}, {self.context}, {self.handler}"
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the initial step."""
-        # LOGGER.debug("async_step_init called: %s\n%s", user_input, self._flow_params())
         return await self.async_step_account_options()
 
     async def async_step_account_options(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle account options step."""
-        # LOGGER.debug("async_step_account_options called: %s\n%s", user_input, self._flow_params())
         options = self.entry.options
 
         if user_input is not None:
-            user_input = _process_account_options(user_input)
-            # LOGGER.debug("user_input: %s, options: %s", user_input, options)
+            user_input = _extract_account_options(user_input)
             # If prefix has changed then tell __init__.async_update_options() to remove
             # and re-add config entry.
             self.hass.data[DOMAIN]["accounts"][self.entry.unique_id][
@@ -379,6 +289,7 @@ class Life360eOptionsFlow(OptionsFlow):
 
 
 def _account_options_schema(options: Mapping[str, Any]) -> vol.Schema:
+    """Create schema for account options form."""
     def_use_prefix = CONF_PREFIX in options
     def_prefix = options.get(CONF_PREFIX, DOMAIN)
     def_limit_gps_acc = CONF_MAX_GPS_ACCURACY in options
@@ -398,11 +309,14 @@ def _account_options_schema(options: Mapping[str, Any]) -> vol.Schema:
     }
 
 
-def _process_account_options(user_input: dict) -> dict[str, Any]:
+def _extract_account_options(user_input: dict) -> dict[str, Any]:
+    """Remove options from user input and return as a separate dict."""
     result = {}
 
     for key in OPTIONS:
         value = user_input.pop(key, None)
+        # Was "include" checkbox (if there was one) corresponding to option key True
+        # (meaning option should be included)?
         incl = user_input.pop(
             {
                 CONF_PREFIX: "use_prefix",

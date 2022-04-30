@@ -96,7 +96,6 @@ def _update_interval(entry: ConfigEntry) -> timedelta:
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up integration."""
     config = config[DOMAIN]
-    # LOGGER.debug("async_setup called: %s", config)
     options = {k: config[k] for k in OPTIONS if config.get(k) is not None}
 
     hass.data[DOMAIN] = IntegData(
@@ -116,6 +115,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     for entry in hass.config_entries.async_entries(DOMAIN):
         # Entry will not have been migrated yet.
         if entry.version == 1:
+            # Version 1 did not use a unique ID and did not store options in config
+            # entry. (Options only came from config file.)
             unique_id = entry.data[CONF_USERNAME].lower()
             options_changed = False
         else:
@@ -125,13 +126,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
         if entry.source == SOURCE_IMPORT:
             if config_account:
+                # Config entry was originally imported, and is still in config file.
                 if entry.data[CONF_PASSWORD] != (pwd := config_account[CONF_PASSWORD]):
-                    # LOGGER.debug("async_setup: %s password changed", unique_id)
                     hass.config_entries.async_update_entry(
                         entry, data=entry.data | {CONF_PASSWORD: pwd}
                     )
                 if options_changed:
-                    # LOGGER.debug("async_setup: %s options changed", unique_id)
                     hass.config_entries.async_update_entry(entry, options=options)
                 # Entry is now up to date with config (although it may still need to be
                 # migrated), no need to create a new entry.
@@ -139,8 +139,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             else:
                 # No longer in config.
                 await hass.config_entries.async_remove(entry.entry_id)
-                # LOGGER.debug("Removed: %s", entry.as_dict())
         elif config_account:
+            # Config entry was not originally imported, but has since been added to
+            # config file. Skip it.
             LOGGER.warning(
                 "Skipping account %s from configuration: "
                 "Credentials already configured in frontend",
@@ -165,7 +166,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate config entry."""
     LOGGER.debug("Migrating config entry from version %s", entry.version)
-    # LOGGER.debug("Before: %s", entry.as_dict())
 
     if entry.version == 1:
         entry.version = 2
@@ -175,15 +175,12 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             options=hass.data[DOMAIN]["options"],
         )
 
-    # LOGGER.debug("After: %s", entry.as_dict())
     LOGGER.info("Config entry migration to version %s successful", entry.version)
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up config entry."""
-    # LOGGER.debug("__init__.async_setup_entry called: %s", entry.as_dict())
-
     account = hass.data[DOMAIN]["accounts"].setdefault(
         cast(str, entry.unique_id), AccountData()
     )
@@ -194,11 +191,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def async_update_data() -> dict[str, dict[str, Any]]:
         """Update Life360 data."""
-
-        # LOGGER.debug("async_update_data called: %s", api)
-        data = await get_life360_data(hass, api)
-        # LOGGER.debug("get_life360_data returned: %s", data)
-        return data
+        return await get_life360_data(hass, api)
 
     if not (coordinator := account.get("coordinator")):
         coordinator = account["coordinator"] = DataUpdateCoordinator(
@@ -222,8 +215,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload config entry."""
-    # LOGGER.debug("async_unload_entry called: %s", entry.as_dict())
-
     # Unload components for our platforms.
     # But first stop checking for new members on update.
     if (unsub := hass.data[DOMAIN]["accounts"][entry.unique_id].pop("unsub", None)) :
@@ -233,8 +224,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Remove config entry."""
-    # LOGGER.debug("async_remove_entry called: %s", entry.as_dict())
-
     try:
         del hass.data[DOMAIN]["accounts"][entry.unique_id]
     except KeyError:
@@ -243,9 +232,11 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options update."""
-    # LOGGER.debug("async_update_options called: %s", entry.as_dict())
     account = hass.data[DOMAIN]["accounts"][entry.unique_id]
     account["coordinator"].update_interval = _update_interval(entry)
+
+    # Some option changes (e.g., prefix, aka entity_namespace) require entities to be
+    # recreated.
     if account.pop("re_add_entry", False):
         await hass.config_entries.async_remove(entry.entry_id)
         await hass.config_entries.async_add(entry)
