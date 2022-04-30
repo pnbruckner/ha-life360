@@ -36,7 +36,7 @@
   },
   "options": {
     "step": {
-      "account_options": {
+      "init": {
         "title": "Account Options",
         "data": {
           "use_prefix": "Use an object ID prefix",

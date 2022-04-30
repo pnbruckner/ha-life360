@@ -264,13 +264,7 @@ class Life360eOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle the initial step."""
-        return await self.async_step_account_options()
-
-    async def async_step_account_options(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle account options step."""
+        """Handle account options."""
         options = self.entry.options
 
         if user_input is not None:
@@ -283,8 +277,7 @@ class Life360eOptionsFlow(OptionsFlow):
             return self.async_create_entry(title="", data=user_input)
 
         return self.async_show_form(
-            step_id="account_options",
-            data_schema=vol.Schema(_account_options_schema(options)),
+            step_id="init", data_schema=vol.Schema(_account_options_schema(options))
         )
 
 
