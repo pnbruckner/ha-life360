@@ -118,9 +118,9 @@ async def get_life360_data(
         circle_id = circle["id"]
         circle_members = await retrieve_data(api.get_circle_members, circle_id)
         circle_places = await retrieve_data(api.get_circle_places, circle_id)
+
         data["circles"][circle_id] = {
             "name": circle["name"],
-            "members": set(member["id"] for member in circle_members),
             "places": {
                 place["id"]: {"name": place["name"]}
                 | {
@@ -137,18 +137,10 @@ async def get_life360_data(
             if not int(member["features"]["shareLocation"]):
                 continue
 
-            member_id = member["id"]
-            loc = member["location"]
-            last_seen = dt_util.utc_from_timestamp(int(loc["timestamp"]))
-
-            # It's possible for a Member to be in more than one Circle, so their data
-            # could be retrieved more than once (i.e., once per Circle.) If their data
-            # was already retrieved and it's just as recent as the last data retrieved,
-            # then skip the "new" data (since it's not actually any newer.)
-            if (existing_entry := data["members"].get(member_id)) and existing_entry[
-                ATTR_LAST_SEEN
-            ] >= last_seen:
-                continue
+            # Note that member may be in more than one circle. If that's the case just
+            # go ahead and process the newly retrieved data (overwriting the older
+            # data), since it might be slightly newer than what was retrieved while
+            # processing another circle.
 
             first = member["firstName"]
             last = member["lastName"]
@@ -156,6 +148,8 @@ async def get_life360_data(
                 name = " ".join([first, last])
             else:
                 name = first or last
+
+            loc = member["location"]
 
             place = loc["name"] or None
 
@@ -173,7 +167,7 @@ async def get_life360_data(
             if hass.config.units.is_metric:
                 speed = convert(speed, LENGTH_MILES, LENGTH_KILOMETERS)
 
-            data["members"][member_id] = {
+            data["members"][member["id"]] = {
                 ATTR_ADDRESS: address,
                 ATTR_AT_LOC_SINCE: dt_util.utc_from_timestamp(int(loc["since"])),
                 ATTR_BATTERY_CHARGING: bool(int(loc["charge"])),
@@ -185,7 +179,7 @@ async def get_life360_data(
                 ATTR_GPS_ACCURACY: round(
                     convert(float(loc["accuracy"]), LENGTH_FEET, LENGTH_METERS)
                 ),
-                ATTR_LAST_SEEN: last_seen,
+                ATTR_LAST_SEEN: dt_util.utc_from_timestamp(int(loc["timestamp"])),
                 ATTR_LATITUDE: float(loc["latitude"]),
                 ATTR_LONGITUDE: float(loc["longitude"]),
                 ATTR_NAME: name,
