@@ -34,6 +34,7 @@ CONF_ERROR_THRESHOLD = "error_threshold"
 CONF_MAX_GPS_ACCURACY = "max_gps_accuracy"
 CONF_MAX_UPDATE_WAIT = "max_update_wait"
 CONF_MEMBERS = "members"
+CONF_SHOW_AS_STATE = "show_as_state"
 CONF_WARNING_THRESHOLD = "warning_threshold"
 
 OPTIONS = (CONF_DRIVING_SPEED, CONF_MAX_GPS_ACCURACY, CONF_PREFIX, CONF_SCAN_INTERVAL)

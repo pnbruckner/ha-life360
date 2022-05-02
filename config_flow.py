@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from asyncio import sleep
 from collections.abc import Mapping
 from typing import Any, Callable, cast, Coroutine
 
@@ -14,17 +13,10 @@ from homeassistant.config_entries import (
     ConfigEntryState,
     ConfigFlow,
     OptionsFlow,
-    SOURCE_IMPORT,
 )
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import (
-    AbortFlow,
-    FlowResult,
-    RESULT_TYPE_ABORT,
-    RESULT_TYPE_CREATE_ENTRY,
-    RESULT_TYPE_FORM,
-)
+from homeassistant.data_entry_flow import FlowResult
 import homeassistant.helpers.config_validation as cv
 
 from .const import (
@@ -39,13 +31,6 @@ from .const import (
     OPTIONS,
 )
 from .helpers import AccountData, get_life360_api, get_life360_authorization
-
-
-_IMPORT_RETRY_PERIOD = 10
-_IMPORT_ERRORS = {
-    "already_configured": "Already configured",
-    "invalid_auth": "Invalid credentials",
-}
 
 
 def account_schema(
@@ -76,6 +61,7 @@ class Life360ConfigFlow(ConfigFlow, domain=DOMAIN):
         self._username: str | vol.UNDEFINED = vol.UNDEFINED
         self._password: str | vol.UNDEFINED = vol.UNDEFINED
         self._api: Life360 | None = None
+        self._options = {}
         self._reauth_entry: ConfigEntry | None = None
         self._first_reauth_confirm = True
 
@@ -84,21 +70,6 @@ class Life360ConfigFlow(ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(entry: ConfigEntry) -> Life360OptionsFlow:
         """Get the options flow for this handler."""
         return Life360OptionsFlow(entry)
-
-    @classmethod
-    @callback
-    def async_supports_options_flow(cls, entry: ConfigEntry) -> bool:
-        """Return options flow support for this handler."""
-        return entry.source != SOURCE_IMPORT
-
-    @property
-    def _options(self) -> Mapping[str, Any]:
-        """Options for new config entry."""
-        return cast(Mapping[str, Any], self.context.setdefault("options", {}))
-
-    @_options.setter
-    def _options(self, options: Mapping[str, Any]) -> None:
-        self.context["options"] = options
 
     async def _async_verify(self, step_id: str) -> FlowResult:
         """Attempt to authorize the provided credentials."""
@@ -149,10 +120,11 @@ class Life360ConfigFlow(ConfigFlow, domain=DOMAIN):
         self.hass.data[DOMAIN]["accounts"][cast(str, self.unique_id)] = AccountData(
             api=self._api
         )
-        title = cast(str, self.unique_id)
-        if self.source == SOURCE_IMPORT:
-            title += " (from configuration)"
-        return self.async_create_entry(title=title, data=data, options=self._options)
+        return self.async_create_entry(
+            title=cast(str, self.unique_id),
+            data=data,
+            options=self._options,
+        )
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -179,10 +151,6 @@ class Life360ConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return await self._async_verify("user")
 
-    async def async_step_import(self, user_input: dict[str, Any]) -> FlowResult:
-        """Handle a config flow from configuration."""
-        return await self._import(self.async_step_user, user_input | self._options)
-
     async def async_step_reauth(self, user_input: dict[str, Any]) -> FlowResult:
         """Handle reauthorization."""
         self._username = user_input[CONF_USERNAME]
@@ -192,8 +160,6 @@ class Life360ConfigFlow(ConfigFlow, domain=DOMAIN):
         )
         # Always start with current credentials since they may still be valid and a
         # simple reauthorization will be successful.
-        if cast(ConfigEntry, self._reauth_entry).source == SOURCE_IMPORT:
-            return await self._import(self.async_step_reauth_confirm, user_input)
         return await self.async_step_reauth_confirm(user_input)
 
     async def async_step_reauth_confirm(
@@ -213,45 +179,6 @@ class Life360ConfigFlow(ConfigFlow, domain=DOMAIN):
 
         self._password = user_input[CONF_PASSWORD]
         return await self._async_verify("reauth_confirm")
-
-    async def _import(
-        self,
-        step_func: Callable[[dict[str, str]], Coroutine[None, None, FlowResult]],
-        user_input: dict[str, str],
-    ) -> FlowResult:
-        """Handle config flows from configuration."""
-        while True:
-            try:
-                result = await step_func(user_input)
-            except AbortFlow as exc:
-                reason = exc.reason
-            else:
-                if result["type"] in (RESULT_TYPE_ABORT, RESULT_TYPE_CREATE_ENTRY):
-                    assert (
-                        result["type"] == RESULT_TYPE_CREATE_ENTRY
-                        or result["reason"] == "reauth_successful"
-                    )
-                    return result
-
-                assert result["type"] == RESULT_TYPE_FORM
-
-                reason = cast(dict[str, str], result["errors"])["base"]
-
-            if error := _IMPORT_ERRORS.get(reason):
-                LOGGER.error(
-                    "Problem with account %s from configuration: %s",
-                    self._username,
-                    error,
-                )
-                return self.async_abort(reason=reason)
-
-            assert reason == "comm_error"
-
-            LOGGER.warning(
-                "Could not authenticate account %s from configuration, will try again",
-                self._username,
-            )
-            await sleep(_IMPORT_RETRY_PERIOD)
 
 
 class Life360OptionsFlow(OptionsFlow):

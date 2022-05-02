@@ -7,16 +7,14 @@ from typing import Any, cast
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigEntry, SOURCE_IMPORT
-from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
+from homeassistant.config_entries import ConfigEntry, SOURCE_USER
+from homeassistant.const import CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .config_flow import account_schema
 from .const import (
-    CONF_ACCOUNTS,
     CONF_AUTHORIZATION,
     CONF_CIRCLES,
     CONF_DRIVING_SPEED,
@@ -26,6 +24,7 @@ from .const import (
     CONF_PREFIX,
     CONF_SCAN_INTERVAL,
     CONF_MEMBERS,
+    CONF_SHOW_AS_STATE,
     CONF_WARNING_THRESHOLD,
     DEFAULT_SCAN_INTERVAL_TD,
     DEFAULT_SCAN_INTERVAL_SEC,
@@ -39,11 +38,12 @@ from .helpers import AccountData, get_life360_api, get_life360_data, IntegData
 PLATFORMS = [Platform.DEVICE_TRACKER]
 DEFAULT_PREFIX = DOMAIN
 
-_REMOVED = (
+_UNUSED_CONF = (
     CONF_CIRCLES,
     CONF_ERROR_THRESHOLD,
     CONF_MAX_UPDATE_WAIT,
     CONF_MEMBERS,
+    CONF_SHOW_AS_STATE,
     CONF_WARNING_THRESHOLD,
 )
 
@@ -54,36 +54,20 @@ def _prefix(value: None | str) -> None | str:
     return value
 
 
-def _removed(config: dict[str, Any]) -> dict[str, Any]:
-    for key in list(config.keys()):
-        if key in _REMOVED:
-            cv.removed(key, raise_if_present=False)(config)
-            config.pop(key)
-    return config
-
-
 LIFE360_SCHEMA = vol.Schema(
-    vol.All(
-        lambda x: {} if x is None else x,
-        _removed,
-        {
-            vol.Optional(CONF_ACCOUNTS, default=list): vol.All(
-                cv.ensure_list, [account_schema()]
-            ),
-            vol.Optional(CONF_DRIVING_SPEED): vol.Coerce(float),
-            vol.Optional(CONF_MAX_GPS_ACCURACY): vol.Coerce(float),
-            vol.Optional(CONF_PREFIX, default=DEFAULT_PREFIX): vol.All(
-                vol.Any(None, cv.string), _prefix
-            ),
-            vol.Optional(
-                CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL_SEC
-            ): vol.Coerce(float),
-        },
-    )
+    {
+        vol.Optional(CONF_DRIVING_SPEED): vol.Coerce(float),
+        vol.Optional(CONF_MAX_GPS_ACCURACY): vol.Coerce(float),
+        vol.Optional(CONF_PREFIX, default=DEFAULT_PREFIX): vol.All(
+            vol.Any(None, cv.string), _prefix
+        ),
+        vol.Optional(
+            CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL_SEC
+        ): vol.Coerce(float),
+    },
+    extra=vol.ALLOW_EXTRA,
 )
-CONFIG_SCHEMA = vol.Schema(
-    {vol.Optional(DOMAIN, default=dict): LIFE360_SCHEMA}, extra=vol.ALLOW_EXTRA
-)
+CONFIG_SCHEMA = vol.Schema({DOMAIN: LIFE360_SCHEMA}, extra=vol.ALLOW_EXTRA)
 
 
 def _update_interval(entry: ConfigEntry) -> timedelta:
@@ -95,8 +79,20 @@ def _update_interval(entry: ConfigEntry) -> timedelta:
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up integration."""
-    config = config[DOMAIN]
-    options = {k: config[k] for k in OPTIONS if config.get(k) is not None}
+    options = {}
+    if conf := config.get(DOMAIN):
+        if any(
+            entry.version == 1 for entry in hass.config_entries.async_entries(DOMAIN)
+        ):
+            # Need config options for migration.
+            if unused_conf := [k for k in conf if k in _UNUSED_CONF]:
+                LOGGER.warning(
+                    "The following options are no longer supported: %s",
+                    ", ".join(unused_conf),
+                )
+            options = {k: conf[k] for k in OPTIONS if conf.get(k) is not None}
+        else:
+            LOGGER.warning("Setup via configuration no longer supported")
 
     hass.data[DOMAIN] = IntegData(
         options=options,
@@ -105,60 +101,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         logged_circles=[],
         logged_places=[],
     )
-
-    config_accounts = {
-        config_account[CONF_USERNAME].lower(): config_account
-        for config_account in config[CONF_ACCOUNTS]
-    }
-
-    # Check existing entries against config accounts.
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        # Entry will not have been migrated yet.
-        if entry.version == 1:
-            # Version 1 did not use a unique ID and did not store options in config
-            # entry. (Options only came from config file.)
-            unique_id = entry.data[CONF_USERNAME].lower()
-            options_changed = False
-        else:
-            unique_id = entry.unique_id
-            options_changed = options != cast(dict, entry.options)
-        config_account = config_accounts.get(unique_id)
-
-        if entry.source == SOURCE_IMPORT:
-            if config_account:
-                # Config entry was originally imported, and is still in config file.
-                if entry.data[CONF_PASSWORD] != (pwd := config_account[CONF_PASSWORD]):
-                    hass.config_entries.async_update_entry(
-                        entry, data=entry.data | {CONF_PASSWORD: pwd}
-                    )
-                if options_changed:
-                    hass.config_entries.async_update_entry(entry, options=options)
-                # Entry is now up to date with config (although it may still need to be
-                # migrated), no need to create a new entry.
-                del config_accounts[unique_id]
-            else:
-                # No longer in config.
-                await hass.config_entries.async_remove(entry.entry_id)
-        elif config_account:
-            # Config entry was not originally imported, but has since been added to
-            # config file. Skip it.
-            LOGGER.warning(
-                "Skipping account %s from configuration: "
-                "Credentials already configured in frontend",
-                config_account[CONF_USERNAME],
-            )
-            del config_accounts[unique_id]
-
-    # Initiate import config flow for any accounts in config that do not already have
-    # a valid entry.
-    for config_account in config_accounts.values():
-        hass.async_create_task(
-            hass.config_entries.flow.async_init(
-                DOMAIN,
-                context={"source": SOURCE_IMPORT, "options": options},
-                data=config_account,
-            )
-        )
 
     return True
 
@@ -169,9 +111,12 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if entry.version == 1:
         entry.version = 2
+        entry.source = SOURCE_USER
+        unique_id = entry.data[CONF_USERNAME].lower()
         hass.config_entries.async_update_entry(
             entry,
-            unique_id=entry.data[CONF_USERNAME].lower(),
+            unique_id=unique_id,
+            title=unique_id,
             options=hass.data[DOMAIN]["options"],
         )
 
