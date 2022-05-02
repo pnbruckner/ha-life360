@@ -6,8 +6,8 @@ from pathlib import Path
 import sys
 
 
-DEFAULT_FILE = "life360_config_backup.json"
-STORAGE_DIR = "../../.storage"
+storage_dir = Path(*Path(sys.argv[0]).parent.absolute().parts[:-2]) / ".storage"
+DEFAULT_FILE = storage_dir / "life360_config_backup.json"
 
 
 def main(args):
@@ -15,7 +15,6 @@ def main(args):
     if backup_file.exists() and not args.force:
         return f"{backup_file} already exists"
 
-    storage_dir = Path(STORAGE_DIR)
     if not storage_dir.is_dir():
         return f"{storage_dir} does not exist"
 
