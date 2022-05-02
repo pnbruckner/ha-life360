@@ -58,9 +58,9 @@ class Life360ConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         """Initialize."""
+        self._api: Life360 | None = None
         self._username: str | vol.UNDEFINED = vol.UNDEFINED
         self._password: str | vol.UNDEFINED = vol.UNDEFINED
-        self._api: Life360 | None = None
         self._options = {}
         self._reauth_entry: ConfigEntry | None = None
         self._first_reauth_confirm = True

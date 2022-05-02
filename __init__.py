@@ -84,7 +84,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         if any(
             entry.version == 1 for entry in hass.config_entries.async_entries(DOMAIN)
         ):
-            # Need config options for migration.
+            # Need config options, if any, for migration.
             if unused_conf := [k for k in conf if k in _UNUSED_CONF]:
                 LOGGER.warning(
                     "The following options are no longer supported: %s",

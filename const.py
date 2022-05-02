@@ -26,7 +26,6 @@ ATTR_SPEED = "speed"
 ATTR_WIFI_ON = "wifi_on"
 ATTRIBUTION = "Data provided by life360.com"
 
-CONF_ACCOUNTS = "accounts"
 CONF_AUTHORIZATION = "authorization"
 CONF_CIRCLES = "circles"
 CONF_DRIVING_SPEED = "driving_speed"

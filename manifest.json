@@ -1,7 +1,10 @@
 {
-    "domain": "life360",
-    "name": "Life360",
-    "config_flow": true,
-    "version": "0.0.1",
-    "requirements": ["life360==4.1.1"]
+  "domain": "life360",
+  "name": "Life360",
+  "version": "0.0.1",
+  "config_flow": true,
+  "documentation": "https://www.home-assistant.io/integrations/life360",
+  "issue_tracker": "https://github.com/pnbruckner/ha-life360/issues",
+  "codeowners": ["@pnbruckner"],
+  "requirements": ["life360==4.1.1"]
 }
