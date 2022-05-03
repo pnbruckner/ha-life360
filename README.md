@@ -5,8 +5,8 @@ Test project for converting Home Assistant Life360 integration to an entity-base
 
 Life360 was added to Home Assistant as a built-in integration right when the
 [Device Tracker](https://www.home-assistant.io/integrations/device_tracker) component was being converted
-from scanner based to entity based. It effectively became a "legacy" Device Tracker platform before it was
-accepted.
+from scanner based to entity based. The Life360 integration effectively became a "legacy" Device Tracker
+platform before it was accepted.
 
 I've long wanted to convert it to the new entity-based structure. This is the result. But before I submit
 it officially, and possibly affect many users with potential issues I didn't foresee, I wanted to get
@@ -42,7 +42,12 @@ Once this custom integration is installed it will be used instead of the built-i
 
 The following config options are no longer supported:
 
-`circles` `error_threshold` `max_update_wait` `members` `show_as_state: moving` `warning_threshold`
+option | description
+-| -
+`circles` `members` | `life360` entities can now be managed via the Entity Registry
+`error_threshold` `warning_threshold` | The integration now uses better built-in error message management mechanisms
+`max_update_wait` | `life360_update_overdue` & `life360_update_restored` events can no longer be generated. The `last_seen` attribute can be used instead to trigger automations.
+`show_as_state: moving` | The `moving` attribute has been removed since it seems it was never really useful.
 
 You may see a warning if you've been using any of these.
 
@@ -51,11 +56,11 @@ You may see a warning if you've been using any of these.
 1. Install per above instructions.
 2. Make a backup of your entire configuration, or at least the Life360 config entries as described above.
 3. Restart Home Assistant.
-4. The existing Life360 config entries will be migrated to a new version.
-6. Since the previous entries still exist in `known_devices.yaml`, you'll see two entities for each Life360 member.
+4. The existing Life360 config entries will be migrated to the new version.
+6. Since the previous entries still exist in `known_devices.yaml`, you'll see two entities for each Life360 member. E.g., `device_tracker.life360_me` and `device_tracer.life360_me_2`. The former is the legacy entity from `known_devices.yaml`, and is effectively useless now. The latter is the new, active entity.
 7. Remove `known_devices.yaml`, or at least comment out the Life360 related entries.
 8. Restart Home Assistant.
-9. Use the Entity Registry to remove the "`_2`" suffix from the Entity ID of each of the Life360 entities.
+9. The legacy entities should be gone. Use the Entity Registry to remove the "`_2`" suffix from the Entity ID of each of the new Life360 entities.
 
 ## Restore procedure
 
