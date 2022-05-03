@@ -34,12 +34,10 @@ def main(args):
         {
             "version": config_entries["version"],
             "minor_version": config_entries.get("minor_version"),
-            "life360_entries": {
-                entry["entry_id"]: entry for entry in life360_entries
-            },
+            "life360_entries": {entry["entry_id"]: entry for entry in life360_entries},
         },
         backup_file.open(mode="w"),
-        indent=4
+        indent=4,
     )
 
     return 0

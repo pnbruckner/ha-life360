@@ -46,7 +46,7 @@ def main(args):
             restored_entries.append(entry)
         elif entry["version"] == 1:
             return f"life360 config entries have not been migrated to version 2"
-        elif not (backup_entry := life360_entries.get(entry["entry_id"])) :
+        elif not (backup_entry := life360_entries.get(entry["entry_id"])):
             if args.force:
                 print(f"deleting new entry ({entry.unique_id}) that has no backup")
             else:
@@ -57,7 +57,9 @@ def main(args):
 
     entity_registry = json.load(entity_registry_file.open())
     entity_registry["data"]["entities"] = list(
-        filter(lambda x: x["platform"] != "life360", entity_registry["data"]["entities"])
+        filter(
+            lambda x: x["platform"] != "life360", entity_registry["data"]["entities"]
+        )
     )
 
     json.dump(config_entries, config_entries_file.open(mode="w"), indent=4)

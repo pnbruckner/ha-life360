@@ -31,6 +31,8 @@ from .const import (
     DOMAIN,
     LOGGER,
     OPTIONS,
+    SHOW_DRIVING,
+    SHOW_MOVING,
 )
 from .helpers import AccountData, get_life360_api, get_life360_data, IntegData
 
@@ -38,12 +40,13 @@ from .helpers import AccountData, get_life360_api, get_life360_data, IntegData
 PLATFORMS = [Platform.DEVICE_TRACKER]
 DEFAULT_PREFIX = DOMAIN
 
+SHOW_AS_STATE_OPTS = [SHOW_DRIVING, SHOW_MOVING]
+
 _UNUSED_CONF = (
     CONF_CIRCLES,
     CONF_ERROR_THRESHOLD,
     CONF_MAX_UPDATE_WAIT,
     CONF_MEMBERS,
-    CONF_SHOW_AS_STATE,
     CONF_WARNING_THRESHOLD,
 )
 
@@ -61,9 +64,12 @@ LIFE360_SCHEMA = vol.Schema(
         vol.Optional(CONF_PREFIX, default=DEFAULT_PREFIX): vol.All(
             vol.Any(None, cv.string), _prefix
         ),
-        vol.Optional(
-            CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL_SEC
-        ): vol.Coerce(float),
+        vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL_SEC): vol.Coerce(
+            float
+        ),
+        vol.Optional(CONF_SHOW_AS_STATE, default=[]): vol.All(
+            cv.ensure_list, [vol.In(SHOW_AS_STATE_OPTS)]
+        ),
     },
     extra=vol.ALLOW_EXTRA,
 )
@@ -91,6 +97,15 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     ", ".join(unused_conf),
                 )
             options = {k: conf[k] for k in OPTIONS if conf.get(k) is not None}
+            if show_as_state := conf.get(CONF_SHOW_AS_STATE):
+                if SHOW_DRIVING in show_as_state:
+                    options[SHOW_DRIVING] = True
+                if SHOW_MOVING in show_as_state:
+                    LOGGER.warning(
+                        "%s is no longer supported as an option for %s",
+                        SHOW_MOVING,
+                        CONF_SHOW_AS_STATE,
+                    )
         else:
             LOGGER.warning("Setup via configuration no longer supported")
 

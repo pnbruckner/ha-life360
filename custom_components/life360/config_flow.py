@@ -29,6 +29,7 @@ from .const import (
     DOMAIN,
     LOGGER,
     OPTIONS,
+    SHOW_DRIVING,
 )
 from .helpers import AccountData, get_life360_api, get_life360_authorization
 
@@ -61,7 +62,7 @@ class Life360ConfigFlow(ConfigFlow, domain=DOMAIN):
         self._api: Life360 | None = None
         self._username: str | vol.UNDEFINED = vol.UNDEFINED
         self._password: str | vol.UNDEFINED = vol.UNDEFINED
-        self._options = {}
+        self._options: dict[str, Any] = {}
         self._reauth_entry: ConfigEntry | None = None
         self._first_reauth_confirm = True
 
@@ -121,9 +122,7 @@ class Life360ConfigFlow(ConfigFlow, domain=DOMAIN):
             api=self._api
         )
         return self.async_create_entry(
-            title=cast(str, self.unique_id),
-            data=data,
-            options=self._options,
+            title=cast(str, self.unique_id), data=data, options=self._options
         )
 
     async def async_step_user(
@@ -211,12 +210,13 @@ class Life360OptionsFlow(OptionsFlow):
 def _account_options_schema(options: Mapping[str, Any]) -> vol.Schema:
     """Create schema for account options form."""
     def_use_prefix = CONF_PREFIX in options
-    def_prefix = options.get(CONF_PREFIX, DOMAIN)
+    def_prefix = options.get(CONF_PREFIX, vol.UNDEFINED)
     def_limit_gps_acc = CONF_MAX_GPS_ACCURACY in options
     def_max_gps = options.get(CONF_MAX_GPS_ACCURACY, vol.UNDEFINED)
     def_set_drive_speed = CONF_DRIVING_SPEED in options
     def_speed = options.get(CONF_DRIVING_SPEED, vol.UNDEFINED)
     def_scan_interval = options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_SEC)
+    def_show_driving = options.get(SHOW_DRIVING)
 
     return {
         vol.Required("use_prefix", default=def_use_prefix): bool,
@@ -226,6 +226,7 @@ def _account_options_schema(options: Mapping[str, Any]) -> vol.Schema:
         vol.Required("set_drive_speed", default=def_set_drive_speed): bool,
         vol.Optional(CONF_DRIVING_SPEED, default=def_speed): vol.Coerce(float),
         vol.Optional(CONF_SCAN_INTERVAL, default=def_scan_interval): vol.Coerce(float),
+        vol.Optional(SHOW_DRIVING, default=def_show_driving): bool,
     }
 
 

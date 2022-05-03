@@ -38,6 +38,7 @@ from .const import (
     CONF_MAX_GPS_ACCURACY,
     DOMAIN,
     LOGGER,
+    SHOW_DRIVING,
 )
 
 
@@ -45,7 +46,6 @@ _EXTRA_ATTRIBUTES = (
     ATTR_ADDRESS,
     ATTR_AT_LOC_SINCE,
     ATTR_BATTERY_CHARGING,
-    ATTR_DRIVING,
     ATTR_LAST_SEEN,
     ATTR_PLACE,
     ATTR_SPEED,
@@ -230,6 +230,21 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
         return cast(int, self._data[ATTR_GPS_ACCURACY])
 
     @property
+    def driving(self) -> bool:
+        """Return if driving."""
+        if (driving_speed := self._options.get(CONF_DRIVING_SPEED)) is not None:
+            if self._data[ATTR_SPEED] >= driving_speed:
+                return True
+        return cast(bool, self._data[ATTR_DRIVING])
+
+    @property
+    def location_name(self) -> str | None:
+        """Return a location name for the current location of the device."""
+        if self._options.get(SHOW_DRIVING) and self.driving:
+            return "Driving"
+        return None
+
+    @property
     def latitude(self) -> float | None:
         """Return latitude value of the device."""
         return cast(float, self._data[ATTR_LATITUDE])
@@ -247,9 +262,5 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
             for k, v in self._data.items()
             if k in _EXTRA_ATTRIBUTES and v is not None
         }
-        driving_speed = self._options.get(CONF_DRIVING_SPEED)
-        if driving_speed is not None:
-            attrs[ATTR_DRIVING] = attrs[ATTR_DRIVING] or (
-                attrs[ATTR_SPEED] > driving_speed
-            )
+        attrs[ATTR_DRIVING] = self.driving
         return attrs
