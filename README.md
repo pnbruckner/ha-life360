@@ -3,7 +3,7 @@ Test project for converting Home Assistant Life360 integration to an entity-base
 
 ## Overview
 
-Life360 was added to Home Assistant as a built-in integration right when the
+[Life360](https://www.home-assistant.io/integrations/life360) was added to Home Assistant as a built-in integration right when the
 [Device Tracker](https://www.home-assistant.io/integrations/device_tracker) component was being converted
 from scanner based to entity based. The Life360 integration effectively became a "legacy" Device Tracker
 platform before it was accepted.
