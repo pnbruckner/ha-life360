@@ -3,7 +3,7 @@
   "name": "Life360",
   "version": "0.0.1",
   "config_flow": true,
-  "documentation": "https://www.home-assistant.io/integrations/life360",
+  "documentation": "https://github.com/pnbruckner/ha-life360/blob/master/README.md",
   "issue_tracker": "https://github.com/pnbruckner/ha-life360/issues",
   "codeowners": ["@pnbruckner"],
   "requirements": ["life360==4.1.1"]
