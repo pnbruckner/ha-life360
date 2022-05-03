@@ -42,7 +42,7 @@ Once this custom integration is installed it will be used instead of the built-i
 
 The following config options are no longer supported:
 
-`circles` `error_threshold` `max_update_wait` `members` `show_as_state` `warning_threshold`
+`circles` `error_threshold` `max_update_wait` `members` `show_as_state: moving` `warning_threshold`
 
 You may see a warning if you've been using any of these.
 
