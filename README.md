@@ -30,9 +30,10 @@ custom integration. Running `life360_backup.py` will by default create a file na
 ## Installation
 
 In theory this can be installed using HACS as an external repository. Or you can manually install it.
+
 Basically you need to get all of the files & folders in [custom_components/life360](custom_components/life360)
 into a similarly named folder in your Home Assistant configuration folder. If you've never done that and are
-not sure how, feel free to ask me for help, either via the
+not sure how, see some [suggestions below](#installation-suggestions), or feel free to ask me for help, either via the
 [Home Assistant Forum](https://community.home-assistant.io/u/pnbruckner/summary) or by opening an
 [issue here](https://github.com/pnbruckner/ha-life360/issues).
 
@@ -71,3 +72,48 @@ You may see a warning if you've been using any of these.
 5. Restart Home Assistant.
 
 ## PLEASE REMEMBER TO GIVE ME FEEDBACK & THANK YOU!
+
+## Installation suggestions
+
+### Download zip file from github
+
+At the top of this page, click on the Code button and pick the "Download ZIP" option at the bottom.
+This will download the entire project. Unzip it, and copy the `life360` foler into the `custom_components`
+folder in your Home Assistant configuration directory.
+
+### Use svn export
+
+If you do not have subversion, you can install it using `sudo apt install subversion`.
+
+`cd` into the `custom_components` folder in your Home Assistant configuration directory.
+Enter the following command:
+
+```
+svn export https://github.com/pnbruckner/ha-life360/trunk/custom_components/life360
+```
+
+### Clone the project and add symolic link
+
+This is actually the method I use. If you don't have git, you can install it using `sudo apt install git`.
+
+First get whichever link you prefer by clicking on the Code button at the top of this page.
+There should be three options: HTTPS, SSH & GitHub CLI. Click on whichever you like,
+then click the copy button to the right of the link.
+
+`cd` to some convenient directory, then enter the following command:
+
+```
+git clone <link_copied_from_code_button>
+```
+For example:
+```
+git clone https://github.com/pnbruckner/ha-life360.git
+```
+This will create a folder named `ha-life360`.
+
+Now `cd` to `custom_components` in your Home Assistant configuration directory.
+Enter the following command:
+
+```
+ln -s <path_to_ha-life360>/custom_components/life360 life360
+```
