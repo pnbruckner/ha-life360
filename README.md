@@ -83,7 +83,7 @@ You may see a warning if you've been using any of these.
 
 ## Account options
 
-You can change an account's options via the new `CONFIG` button when viewing the account on the Integrations page. These same options will be presented when creating a new account entry.
+You can change an account's options via the new `CONFIGURE` button when viewing the account on the Integrations page. These same options will be presented when creating a new account entry.
 
 ![Account Options](images/integration_options.png)
 
