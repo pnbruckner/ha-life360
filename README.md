@@ -29,7 +29,8 @@ custom integration. Running `life360_backup.py` will by default create a file na
 
 ## Installation
 
-In theory this can be installed using HACS as an external repository. Or you can manually install it.
+In theory this can be installed using [HACS](https://hacs.xyz/) as an [custom repository](https://hacs.xyz/docs/faq/custom_repositories/).
+Or you can manually install it.
 
 Basically you need to get all of the files & folders in [custom_components/life360](custom_components/life360)
 into a similarly named folder in your Home Assistant configuration folder. If you've never done that and are
@@ -88,7 +89,7 @@ Show driving as state | Check this box to change entity state to "Driving" when 
 
 ## PLEASE REMEMBER TO GIVE ME FEEDBACK & THANK YOU!
 
-## Installation suggestions
+## Manual installation suggestions
 
 ### Download zip file from github
 
