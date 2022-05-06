@@ -40,6 +40,34 @@ not sure how, see some [suggestions below](#installation-suggestions), or feel f
 
 Once this custom integration is installed it will be used instead of the built-in integration.
 
+## Procedures
+### Install, run and configure
+
+1. Make a backup of your entire configuration, or at least the Life360 config entries as described above and the `known_devices.yaml` file.
+2. Install per above instructions.
+3. Restart Home Assistant.
+4. The existing Life360 config entries will be migrated to the new version.
+6. Since the previous entries still exist in `known_devices.yaml`, you'll see two entities for each Life360 member. E.g., `device_tracker.life360_me` and `device_tracer.life360_me_2`. The former is the legacy entity from `known_devices.yaml`, and is effectively useless now. The latter is the new, active entity.
+7. Remove `known_devices.yaml`, or at least comment out the Life360 related entries, or set their `track` items to `false`.
+8. Restart Home Assistant.
+9. The legacy entities should be gone. Use the Entity Registry to remove the "`_2`" suffix from the Entity ID of each of the new Life360 entities.
+
+### Alternate stream-lined install
+
+1. Make a backup of your entire configuration, or at least the Life360 config entries as described above and the `known_devices.yaml` file.
+2. Install per above instructions.
+3. Remove `known_devices.yaml`, or at least comment out the Life360 related entries, or set their `track` items to `false`.
+4. Restart Home Assistant.
+5. The existing Life360 config entries will be migrated to the new version.
+
+### Restore
+
+1. Shut down Home Assistant.
+2. Remove the `life360` directory from the `custom_components` directory in your Home Assistant configuration directory.
+3. Restore from your configuration backup, or use the `life360_restore.py` script to restore the Life360 config entries and to remove the Life360 entities from the Entity Registry.
+4. Restore `known_devices.yaml`.
+5. Restart Home Assistant.
+
 ## Options no longer supported
 
 The following config options are no longer supported:
@@ -53,26 +81,9 @@ option | description
 
 You may see a warning if you've been using any of these.
 
-## Procedure
-
-1. Install per above instructions.
-2. Make a backup of your entire configuration, or at least the Life360 config entries as described above.
-3. Restart Home Assistant.
-4. The existing Life360 config entries will be migrated to the new version.
-6. Since the previous entries still exist in `known_devices.yaml`, you'll see two entities for each Life360 member. E.g., `device_tracker.life360_me` and `device_tracer.life360_me_2`. The former is the legacy entity from `known_devices.yaml`, and is effectively useless now. The latter is the new, active entity.
-7. Remove `known_devices.yaml`, or at least comment out the Life360 related entries.
-8. Restart Home Assistant.
-9. The legacy entities should be gone. Use the Entity Registry to remove the "`_2`" suffix from the Entity ID of each of the new Life360 entities.
-
-## Restore procedure
-
-1. Shut down Home Assistant.
-2. Remove the `life360` directory from the `custom_components` directory in your Home Assistant configuration directory.
-3. Restore from your configuration backup, or use the `life360_restore.py` script to restore the Life360 config entries and to remove the Life360 entities from the Entity Registry.
-4. Restore `known_devices.yaml`.
-5. Restart Home Assistant.
-
 ## Account options
+
+You can change an account's options via the new `CONFIG` button when viewing the account on the Integrations page. These same options will be presented when creating a new account entry.
 
 ![Account Options](images/integration_options.png)
 
