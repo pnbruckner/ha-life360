@@ -14,7 +14,7 @@ feedback from users willing to give it a try. If you're willing, read on...
 
 ## Versions
 
-This has been tested with Home Assistant 2022.4.7 using Python 3.9. If you're using different versions your
+This has been tested with Home Assistant 2022.4.7 & 2022.5.1, using Python 3.9. If you're using different versions your
 mileage may vary. If you'd still like to give it a try, let me know what versions you're using and I'll try
 to test with them first.
 
@@ -70,6 +70,21 @@ You may see a warning if you've been using any of these.
 3. Restore from your configuration backup, or use the `life360_restore.py` script to restore the Life360 config entries and to remove the Life360 entities from the Entity Registry.
 4. Restore `known_devices.yaml`.
 5. Restart Home Assistant.
+
+## Account options
+
+![Account Options](images/integration_options.png)
+
+item | description
+-|-
+Use an object ID prefix | Check this box to use an [Entity Namespace](https://www.home-assistant.io/docs/configuration/platform_options/#entity-namespace)
+Entity namespace | Prefix string for `device_tracker` object IDs
+Limit GPS accuracy | Check this box to limit location updates based on location accuracy
+Max GPS accuracy | If location's accuracy circle is larger than this value (i.e., _less_ accurate than this limit) the update will be ignored (always specified in meters)
+Set driving speed threshold | Check this box to force `driving` attribute to be `True` if the `speed` attribute is at or above specified value
+Driving Speed | Speed threshold (mph or kph, depending on Home Assistant Unit System selection)
+Life360 server query period | Time between Life360 server queries (seconds)
+Show driving as state | Check this box to change entity state to "Driving" when `driving` attribute is `True`
 
 ## PLEASE REMEMBER TO GIVE ME FEEDBACK & THANK YOU!
 
