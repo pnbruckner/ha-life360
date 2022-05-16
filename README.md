@@ -102,7 +102,7 @@ Show driving as state | Check this box to change entity state to "Driving" when 
 
 ## PLEASE REMEMBER TO GIVE ME FEEDBACK & THANK YOU!
 
-Which you can do either via the [Home Assistant Forum](https://community.home-assistant.io/u/pnbruckner/summary)
+Which you can do either via the [Home Assistant Forum](https://community.home-assistant.io/t/life360-conversion-to-entity-based-device-tracker-testers-needed/422454)
 or by opening an [issue here](https://github.com/pnbruckner/ha-life360/issues)
 
 ## Manual installation suggestions
