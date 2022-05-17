@@ -34,7 +34,13 @@ from .const import (
     SHOW_DRIVING,
     SHOW_MOVING,
 )
-from .helpers import AccountData, get_life360_api, get_life360_data, IntegData
+from .helpers import (
+    AccountData,
+    get_life360_api,
+    get_life360_data,
+    init_integ_data,
+    IntegData,
+)
 
 
 PLATFORMS = [Platform.DEVICE_TRACKER]
@@ -85,7 +91,7 @@ def _update_interval(entry: ConfigEntry) -> timedelta:
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up integration."""
-    options = {}
+    cfg_options = {}
     if conf := config.get(DOMAIN):
         if any(
             entry.version == 1 for entry in hass.config_entries.async_entries(DOMAIN)
@@ -96,10 +102,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     "The following options are no longer supported: %s",
                     ", ".join(unused_conf),
                 )
-            options = {k: conf[k] for k in OPTIONS if conf.get(k) is not None}
+            cfg_options = {k: conf[k] for k in OPTIONS if conf.get(k) is not None}
             if show_as_state := conf.get(CONF_SHOW_AS_STATE):
                 if SHOW_DRIVING in show_as_state:
-                    options[SHOW_DRIVING] = True
+                    cfg_options[SHOW_DRIVING] = True
                 if SHOW_MOVING in show_as_state:
                     LOGGER.warning(
                         "%s is no longer supported as an option for %s",
@@ -109,13 +115,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         else:
             LOGGER.warning("Setup via configuration no longer supported")
 
-    hass.data[DOMAIN] = IntegData(
-        options=options,
-        accounts={},
-        tracked_members={},
-        logged_circles=[],
-        logged_places=[],
-    )
+    init_integ_data(hass, cfg_options)
 
     return True
 
@@ -132,7 +132,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry,
             unique_id=unique_id,
             title=unique_id,
-            options=hass.data[DOMAIN]["options"],
+            options=hass.data[DOMAIN]["cfg_options"],
         )
 
     LOGGER.info("Config entry migration to version %s successful", entry.version)

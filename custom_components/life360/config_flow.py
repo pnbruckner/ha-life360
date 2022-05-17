@@ -31,7 +31,12 @@ from .const import (
     OPTIONS,
     SHOW_DRIVING,
 )
-from .helpers import AccountData, get_life360_api, get_life360_authorization
+from .helpers import (
+    AccountData,
+    get_life360_api,
+    get_life360_authorization,
+    init_integ_data,
+)
 
 
 def account_schema(
@@ -118,6 +123,7 @@ class Life360ConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
             return self.async_abort(reason="reauth_successful")
 
+        init_integ_data(self.hass)
         self.hass.data[DOMAIN]["accounts"][cast(str, self.unique_id)] = AccountData(
             api=self._api
         )
@@ -216,7 +222,7 @@ def _account_options_schema(options: Mapping[str, Any]) -> vol.Schema:
     def_set_drive_speed = CONF_DRIVING_SPEED in options
     def_speed = options.get(CONF_DRIVING_SPEED, vol.UNDEFINED)
     def_scan_interval = options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_SEC)
-    def_show_driving = options.get(SHOW_DRIVING)
+    def_show_driving = options.get(SHOW_DRIVING, vol.UNDEFINED)
 
     return {
         vol.Required("use_prefix", default=def_use_prefix): bool,

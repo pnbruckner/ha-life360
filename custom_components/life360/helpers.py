@@ -36,6 +36,7 @@ from .const import (
     ATTR_WIFI_ON,
     COMM_MAX_RETRIES,
     COMM_TIMEOUT,
+    DOMAIN,
     LOGGER,
     SPEED_DIGITS,
     SPEED_FACTOR_MPH,
@@ -54,13 +55,29 @@ class AccountData(TypedDict, total=False):
 class IntegData(TypedDict):
     """Integration data."""
 
-    options: dict[str, Any]
+    cfg_options: dict[str, Any]
     # ConfigEntry.unique_id: AccountData
     accounts: dict[str, AccountData]
     # member_id: ConfigEntry.unique_id
     tracked_members: dict[str, str]
     logged_circles: list[str]
     logged_places: list[str]
+
+
+def init_integ_data(
+    hass: HomeAssistant, cfg_options: dict[str, Any] | None = None
+) -> None:
+    """Initialize domain's hass data if necessary."""
+    hass.data.setdefault(
+        DOMAIN,
+        IntegData(
+            cfg_options=cfg_options or {},
+            accounts={},
+            tracked_members={},
+            logged_circles=[],
+            logged_places=[],
+        )
+    )
 
 
 def get_life360_api(authorization: str | None = None) -> Life360:
