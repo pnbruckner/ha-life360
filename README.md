@@ -70,16 +70,24 @@ This method would more closely match updating without realizing the integration 
 4. Restore `known_devices.yaml`.
 5. Restart Home Assistant.
 
+## Attribute changes
+
+attribute | changed to | description
+-|-|-
+`moving` | removed | The value from the server this was based on never seemed to be valid.
+`raw_speed` | removed | This "raw" value was never really useful like the converted `speed` value.
+`battery` | `battery_level` | This is a function of the Device Tracker component.
+
 ## Options no longer supported
 
 The following config options are no longer supported:
 
 option | description
 -| -
-`circles` `members` | `life360` entities can now be managed via the Entity Registry
-`error_threshold` `warning_threshold` | The integration now uses better built-in error message management mechanisms
+`circles` `members` | `life360` entities can now be managed via the Entity Registry.
+`error_threshold` `warning_threshold` | The integration now uses better built-in error message management mechanisms.
 `max_update_wait` | `life360_update_overdue` & `life360_update_restored` events can no longer be generated. The `last_seen` attribute can be used instead to trigger automations.
-`show_as_state: moving` | The `moving` attribute has been removed since it seems it was never really useful.
+`show_as_state: moving` | No longer meaninful since the `moving` attribute has been removed.
 
 You may see a warning if you've been using any of these.
 
