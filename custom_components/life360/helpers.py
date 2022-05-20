@@ -107,7 +107,7 @@ async def get_life360_authorization(
         errors["base"] = "invalid_auth"
     except Life360Error as exc:
         LOGGER.debug("Unexpected error communicating with Life360 server: %s", exc)
-        errors["base"] = "comm_error"
+        errors["base"] = "cannot_connect"
 
     return authorization
 

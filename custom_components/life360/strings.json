@@ -17,7 +17,7 @@
         }
       },
       "reauth_confirm": {
-        "title": "Re-authenticate Life360 Account",
+        "title": "[%key:common::config_flow::title::reauth%]",
         "data": {
           "password": "[%key:common::config_flow::data::password%]"
         }
@@ -26,13 +26,13 @@
     "error": {
       "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
       "already_configured": "[%key:common::config_flow::abort::already_configured_account%]",
-      "comm_error": "Trouble communicating with Life360 server",
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
       "unknown": "[%key:common::config_flow::error::unknown%]"
     },
     "abort": {
       "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
       "already_configured": "[%key:common::config_flow::abort::already_configured_account%]",
-      "reauth_successful": "Re-authentication was successful."
+      "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]"
     }
   },
   "options": {
