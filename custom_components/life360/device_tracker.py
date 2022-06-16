@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, cast, Mapping
+from collections.abc import Mapping
+from typing import Any, cast
 
 from homeassistant.components.device_tracker import SOURCE_TYPE_GPS
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
@@ -18,7 +19,7 @@ from homeassistant.const import (
     ATTR_NAME,
     CONF_PREFIX,
 )
-from homeassistant.core import callback, HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback, EntityPlatform
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
@@ -40,7 +41,6 @@ from .const import (
     LOGGER,
     SHOW_DRIVING,
 )
-
 
 _EXTRA_ATTRIBUTES = (
     ATTR_ADDRESS,
@@ -88,7 +88,7 @@ async def async_setup_entry(
         new_entities = []
         for member_id, member in coordinator.data["members"].items():
             tracked_by_account = tracked_members.get(member_id)
-            if (new_member := not tracked_by_account) :
+            if new_member := not tracked_by_account:
                 tracked_members[member_id] = entry.unique_id
                 LOGGER.info("Member: %s", member[ATTR_NAME])
             if (
@@ -212,6 +212,7 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
     @property
     def battery_level(self) -> int | None:
         """Return the battery level of the device.
+
         Percentage from 0-100.
         """
         return cast(int, self._data[ATTR_BATTERY_LEVEL])

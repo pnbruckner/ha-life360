@@ -1,9 +1,9 @@
 """Life360 integration helpers."""
 
 from __future__ import annotations
-from curses.ascii import SP
 
-from typing import Any, Callable, TypedDict
+from collections.abc import Callable
+from typing import Any, TypedDict
 
 from life360 import Life360, Life360Error, LoginError
 
@@ -76,7 +76,7 @@ def init_integ_data(
             tracked_members={},
             logged_circles=[],
             logged_places=[],
-        )
+        ),
     )
 
 

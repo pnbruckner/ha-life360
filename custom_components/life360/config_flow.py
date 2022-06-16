@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Callable, cast, Coroutine
+from typing import Any, cast
 
 from life360 import Life360
 import voluptuous as vol
@@ -42,7 +42,7 @@ from .helpers import (
 def account_schema(
     def_username: str | vol.UNDEFINED = vol.UNDEFINED,
     def_password: str | vol.UNDEFINED = vol.UNDEFINED,
-) -> dict[Any, Callable[[Any], str]]:
+) -> dict[vol.Marker, Any]:
     """Return schema for an account with optional default values."""
     return {
         vol.Required(CONF_USERNAME, default=def_username): cv.string,
@@ -52,7 +52,7 @@ def account_schema(
 
 def password_schema(
     def_password: str | vol.UNDEFINED = vol.UNDEFINED,
-) -> dict[Any, Callable[[Any], str]]:
+) -> dict[vol.Marker, Any]:
     """Return schema for a password with optional default value."""
     return {vol.Required(CONF_PASSWORD, default=def_password): cv.string}
 
@@ -73,9 +73,9 @@ class Life360ConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(entry: ConfigEntry) -> Life360OptionsFlow:
+    def async_get_options_flow(config_entry: ConfigEntry) -> Life360OptionsFlow:
         """Get the options flow for this handler."""
-        return Life360OptionsFlow(entry)
+        return Life360OptionsFlow(config_entry)
 
     async def _async_verify(self, step_id: str) -> FlowResult:
         """Attempt to authorize the provided credentials."""
@@ -94,7 +94,13 @@ class Life360ConfigFlow(ConfigFlow, domain=DOMAIN):
                     self._username, self._password
                 ) | _account_options_schema(self._options)
             else:
-                schema = password_schema(self._password)
+                # Don't show current password the first time we prompt for password
+                # since this will happen asynchronously. However, once the user enters a
+                # password, we can show it in case it's not valid to make it easier to
+                # enter a long, complicated password.
+                pwd = vol.UNDEFINED if self._first_reauth_confirm else self._password
+                self._first_reauth_confirm = False
+                schema = password_schema(pwd)
             return self.async_show_form(
                 step_id=step_id, data_schema=vol.Schema(schema), errors=errors
             )
@@ -167,21 +173,8 @@ class Life360ConfigFlow(ConfigFlow, domain=DOMAIN):
         # simple reauthorization will be successful.
         return await self.async_step_reauth_confirm(user_input)
 
-    async def async_step_reauth_confirm(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    async def async_step_reauth_confirm(self, user_input: dict[str, Any]) -> FlowResult:
         """Handle reauthorization completion."""
-        if not user_input:
-            # Don't show current password the first time we prompt for password since
-            # this will happen asynchronously. However, once the user enters a password,
-            # we can show it in case it's not valid to make it easier to enter a long,
-            # complicated password.
-            pwd = vol.UNDEFINED if self._first_reauth_confirm else self._password
-            self._first_reauth_confirm = False
-            return self.async_show_form(
-                step_id="reauth_confirm", data_schema=vol.Schema(password_schema(pwd))
-            )
-
         self._password = user_input[CONF_PASSWORD]
         return await self._async_verify("reauth_confirm")
 
@@ -189,31 +182,31 @@ class Life360ConfigFlow(ConfigFlow, domain=DOMAIN):
 class Life360OptionsFlow(OptionsFlow):
     """Life360 integration options flow."""
 
-    def __init__(self, entry: ConfigEntry) -> None:
+    def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize."""
-        self.entry = entry
+        self.config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle account options."""
-        options = self.entry.options
+        options = self.config_entry.options
 
         if user_input is not None:
-            user_input = _extract_account_options(user_input)
+            new_options = _extract_account_options(user_input)
             # If prefix has changed then tell __init__.async_update_options() to remove
             # and re-add config entry.
-            self.hass.data[DOMAIN]["accounts"][self.entry.unique_id][
+            self.hass.data[DOMAIN]["accounts"][self.config_entry.unique_id][
                 "re_add_entry"
-            ] = user_input.get(CONF_PREFIX) != options.get(CONF_PREFIX)
-            return self.async_create_entry(title="", data=user_input)
+            ] = new_options.get(CONF_PREFIX) != options.get(CONF_PREFIX)
+            return self.async_create_entry(title="", data=new_options)
 
         return self.async_show_form(
             step_id="init", data_schema=vol.Schema(_account_options_schema(options))
         )
 
 
-def _account_options_schema(options: Mapping[str, Any]) -> vol.Schema:
+def _account_options_schema(options: Mapping[str, Any]) -> dict[vol.Marker, Any]:
     """Create schema for account options form."""
     def_use_prefix = CONF_PREFIX in options
     def_prefix = options.get(CONF_PREFIX, vol.UNDEFINED)

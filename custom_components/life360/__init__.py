@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigEntry, SOURCE_USER
+from homeassistant.config_entries import SOURCE_USER, ConfigEntry
 from homeassistant.const import CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
 import homeassistant.helpers.config_validation as cv
@@ -21,27 +21,20 @@ from .const import (
     CONF_ERROR_THRESHOLD,
     CONF_MAX_GPS_ACCURACY,
     CONF_MAX_UPDATE_WAIT,
+    CONF_MEMBERS,
     CONF_PREFIX,
     CONF_SCAN_INTERVAL,
-    CONF_MEMBERS,
     CONF_SHOW_AS_STATE,
     CONF_WARNING_THRESHOLD,
-    DEFAULT_SCAN_INTERVAL_TD,
     DEFAULT_SCAN_INTERVAL_SEC,
+    DEFAULT_SCAN_INTERVAL_TD,
     DOMAIN,
     LOGGER,
     OPTIONS,
     SHOW_DRIVING,
     SHOW_MOVING,
 )
-from .helpers import (
-    AccountData,
-    get_life360_api,
-    get_life360_data,
-    init_integ_data,
-    IntegData,
-)
-
+from .helpers import AccountData, get_life360_api, get_life360_data, init_integ_data
 
 PLATFORMS = [Platform.DEVICE_TRACKER]
 DEFAULT_PREFIX = DOMAIN
@@ -177,7 +170,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload config entry."""
     # Unload components for our platforms.
     # But first stop checking for new members on update.
-    if (unsub := hass.data[DOMAIN]["accounts"][entry.unique_id].pop("unsub", None)) :
+    if unsub := hass.data[DOMAIN]["accounts"][entry.unique_id].pop("unsub", None):
         unsub()
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 

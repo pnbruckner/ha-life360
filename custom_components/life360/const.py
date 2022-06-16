@@ -6,7 +6,6 @@ from homeassistant.components.device_tracker import CONF_SCAN_INTERVAL
 from homeassistant.components.device_tracker.const import SCAN_INTERVAL
 from homeassistant.const import CONF_PREFIX
 
-
 DOMAIN = "life360"
 LOGGER = logging.getLogger(__package__)
 
