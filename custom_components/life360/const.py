@@ -18,8 +18,12 @@ ATTR_AT_LOC_SINCE = "at_loc_since"
 ATTR_DRIVING = "driving"
 ATTR_LAST_SEEN = "last_seen"
 ATTR_PLACE = "place"
+ATTR_REASON = "reason"
 ATTR_SPEED = "speed"
 ATTR_WIFI_ON = "wifi_on"
+ATTR_IGNORED_UPDATE_REASONS = "ignored_update_reasons"
+
+STATE_DRIVING = "Driving"
 
 CONF_AUTHORIZATION = "authorization"
 CONF_CIRCLES = "circles"
@@ -40,3 +44,6 @@ DEFAULT_OPTIONS = {
     SHOW_DRIVING: False,
 }
 OPTIONS = list(DEFAULT_OPTIONS.keys())
+
+DATA_CONFIG_OPTIONS = "config_options"
+DATA_CENTRAL_COORDINATOR = "central_coordinator"
