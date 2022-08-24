@@ -2,192 +2,233 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
+from contextlib import suppress
+from copy import deepcopy
+from datetime import datetime
+from functools import partial
 from typing import Any, cast
 
-from homeassistant.components.device_tracker import SOURCE_TYPE_GPS
+from homeassistant.components.device_tracker import SourceType
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    ATTR_BATTERY_CHARGING,
-    ATTR_BATTERY_LEVEL,
-    ATTR_ENTITY_PICTURE,
-    ATTR_GPS_ACCURACY,
-    ATTR_LATITUDE,
-    ATTR_LONGITUDE,
-    ATTR_NAME,
-    CONF_PREFIX,
-)
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddEntitiesCallback, EntityPlatform
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-)
+from homeassistant.const import ATTR_BATTERY_CHARGING, ATTR_GPS_ACCURACY, STATE_UNKNOWN
+from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     ATTR_ADDRESS,
     ATTR_AT_LOC_SINCE,
     ATTR_DRIVING,
+    ATTR_IGNORED_UPDATE_REASONS,
     ATTR_LAST_SEEN,
     ATTR_PLACE,
+    ATTR_REASON,
     ATTR_SPEED,
     ATTR_WIFI_ON,
     ATTRIBUTION,
     CONF_DRIVING_SPEED,
     CONF_MAX_GPS_ACCURACY,
+    DATA_CENTRAL_COORDINATOR,
     DOMAIN,
     LOGGER,
     SHOW_DRIVING,
+    STATE_DRIVING,
 )
-
-_EXTRA_ATTRIBUTES = (
-    ATTR_ADDRESS,
-    ATTR_AT_LOC_SINCE,
-    ATTR_BATTERY_CHARGING,
-    ATTR_LAST_SEEN,
-    ATTR_PLACE,
-    ATTR_SPEED,
-    ATTR_WIFI_ON,
+from .coordinator import (
+    Life360CentralDataUpdateCoordinator,
+    Life360DataUpdateCoordinator,
+    Member,
+    MemberID,
+    MemberStatus,
 )
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the device tracker platform."""
-    account = hass.data[DOMAIN]["accounts"][entry.unique_id]
-    coordinator = account["coordinator"]
-    tracked_members = hass.data[DOMAIN]["tracked_members"]
-    logged_circles = hass.data[DOMAIN]["logged_circles"]
-    logged_places = hass.data[DOMAIN]["logged_places"]
+    coordinator = cast(
+        Life360CentralDataUpdateCoordinator,
+        hass.data[DOMAIN][DATA_CENTRAL_COORDINATOR],
+    ).config_coordinator(config_entry.entry_id)
+    tracked_members: set[MemberID] = set()
 
-    @callback
-    def process_data(new_members_only: bool = True) -> None:
-        """Process new Life360 data."""
-        for circle_id, circle in coordinator.data["circles"].items():
-            if circle_id not in logged_circles:
-                logged_circles.append(circle_id)
-                LOGGER.info("Circle: %s", circle["name"])
+    def remove_tracked_member(memberid: MemberID) -> None:
+        """Remove a tracked member."""
+        tracked_members.remove(memberid)
 
-            new_places = []
-            for place_id, place in circle["places"].items():
-                if place_id not in logged_places:
-                    logged_places.append(place_id)
-                    new_places.append(place)
-            if new_places:
-                msg = f"Places from {circle['name']}:"
-                for place in new_places:
-                    msg += f"\n- name: {place['name']}"
-                    msg += f"\n  latitude: {place['latitude']}"
-                    msg += f"\n  longitude: {place['longitude']}"
-                    msg += f"\n  radius: {place['radius']}"
-                LOGGER.debug(msg)
-
-        new_entities = []
-        for member_id, member in coordinator.data["members"].items():
-            tracked_by_account = tracked_members.get(member_id)
-            if new_member := not tracked_by_account:
-                tracked_members[member_id] = entry.unique_id
-                LOGGER.info("Member: %s", member[ATTR_NAME])
-            if (
-                new_member
-                or tracked_by_account == entry.unique_id
-                and not new_members_only
-            ):
-                new_entities.append(Life360DeviceTracker(coordinator, member_id))
-        if new_entities:
+    def process_data() -> None:
+        """Process new Life360 Member data."""
+        if create_entities := set(coordinator.data) - tracked_members:
+            new_entities: list[Life360DeviceTracker] = []
+            for member_id in create_entities:
+                entity = Life360DeviceTracker(coordinator, member_id)
+                tracked_members.add(member_id)
+                entity.async_on_remove(partial(remove_tracked_member, member_id))
+                new_entities.append(entity)
+            LOGGER.info("%s: add entities: %s", config_entry.title, new_entities)
             async_add_entities(new_entities)
 
-    process_data(new_members_only=False)
-    account["unsub"] = coordinator.async_add_listener(process_data)
+    process_data()
+    config_entry.async_on_unload(coordinator.async_add_listener(process_data))
 
 
-class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
+class Life360DeviceTracker(
+    CoordinatorEntity[Life360DataUpdateCoordinator], TrackerEntity
+):
     """Life360 Device Tracker."""
 
-    def __init__(self, coordinator: DataUpdateCoordinator, member_id: str) -> None:
+    _attr_attribution = ATTRIBUTION
+    _attr_unique_id: MemberID
+    coordinator: Life360DataUpdateCoordinator
+    _registry_entry_updated = False
+    _warned_loc_unknown = False
+
+    def __init__(
+        self, coordinator: Life360DataUpdateCoordinator, member_id: MemberID
+    ) -> None:
         """Initialize Life360 Entity."""
         super().__init__(coordinator)
-        self._attr_attribution = ATTRIBUTION
         self._attr_unique_id = member_id
 
-        self._data = coordinator.data["members"][self.unique_id]
+        self._options = coordinator.config_entry.options.copy()
+        self._data: Member | None = deepcopy(coordinator.data[member_id])
+        self._prev_data = self._data
+        self._ignored_update_reasons: list[str] = []
 
-        self._attr_name = self._data[ATTR_NAME]
-        self._attr_entity_picture = self._data[ATTR_ENTITY_PICTURE]
+        if self._data.status == MemberStatus.VALID:
+            if (address := self._data.loc.address) == self._data.loc.place:
+                address = None
+            self._addresses: list[str | None] = [address]
+        else:
+            self._addresses = []
 
-        self._prev_data = self._filtered_data()
+        self.async_on_remove(
+            coordinator.config_entry.add_update_listener(
+                self._async_config_entry_updated
+            )
+        )
 
-    def _filtered_data(self) -> dict[str, Any]:
-        # Filter out data that should be ignored when checking if anything has changed
-        # since last update. For now that's address, since that often constantly changes
-        # (back and forth between two values), even when nothing else changes. If it
-        # isn't filtered out, there will be way more state changes which would basically
-        # be useless (and spam the database, and possibly the log.)
-        return {k: v for k, v in self._data.items() if k != ATTR_ADDRESS}
+    def __repr__(self) -> str:
+        """Return identification string."""
+        if name := (
+            self.registry_entry
+            and (self.registry_entry.name or self.registry_entry.original_name)
+            or self._data
+            and self._data.name
+        ):
+            return f"{name} ({self.entity_id})"
+        return self.entity_id
 
-    @property
-    def _options(self) -> Mapping[str, Any]:
-        """Shortcut to config entry options."""
-        return cast(Mapping[str, Any], self.coordinator.config_entry.options)
+    async def _async_config_entry_updated(self, _, config_entry: ConfigEntry) -> None:
+        """Run when the config entry has been updated."""
+        if self._options != (new_options := config_entry.options.copy()):
+            self._options = new_options
+            # Re-process current data.
+            self._handle_coordinator_update()
 
     @callback
-    def add_to_platform_start(
-        self,
-        hass: HomeAssistant,
-        platform: EntityPlatform,
-        parallel_updates: asyncio.Semaphore | None,
-    ) -> None:
-        """Start adding an entity to a platform."""
-        platform.entity_namespace = self._options.get(CONF_PREFIX)
-        super().add_to_platform_start(hass, platform, parallel_updates)
+    def async_registry_entry_updated(self) -> None:
+        """Run when the entity registry entry has been updated."""
+        self._registry_entry_updated = True
+
+    async def _async_registry_updated(self, event: Event) -> None:
+        """Handle entity registry update."""
+        await super()._async_registry_updated(event)
+        if self._registry_entry_updated:
+            self._registry_entry_updated = False
+            if "config_entry_id" in event.data["changes"]:
+                # Member has been reassigned to a new config entry so this entity
+                # needs to be removed before it is recreated by new config entry.
+                # This will be handled by the system when the config entry is
+                # unloaded.
+                # However, config entry is still loaded and associated with the
+                # coordinator that was used to create this entity. Therefore, the
+                # entity needs to be removed here.
+                await self.async_remove()
+
+    def _process_update(self):
+        """Process new Member data."""
+        # Check if we should effectively throw out new location data.
+        last_seen = cast(datetime, self._data.loc.last_seen)
+        prev_seen = cast(datetime, self._prev_data.loc.last_seen)
+        max_gps_acc = self._options.get(CONF_MAX_GPS_ACCURACY)
+        bad_last_seen = last_seen < prev_seen
+        bad_accuracy = max_gps_acc is not None and self.location_accuracy > max_gps_acc
+
+        if bad_last_seen or bad_accuracy:
+            if bad_last_seen and ATTR_LAST_SEEN not in self._ignored_update_reasons:
+                self._ignored_update_reasons.append(ATTR_LAST_SEEN)
+                LOGGER.warning(
+                    "%s: Ignoring location update because "
+                    "last_seen (%s) < previous last_seen (%s)",
+                    self,
+                    last_seen,
+                    prev_seen,
+                )
+            if bad_accuracy and ATTR_GPS_ACCURACY not in self._ignored_update_reasons:
+                self._ignored_update_reasons.append(ATTR_GPS_ACCURACY)
+                LOGGER.warning(
+                    "%s: Ignoring location update because "
+                    "expected GPS accuracy (%0.1f) is not met: %i",
+                    self,
+                    max_gps_acc,
+                    self.location_accuracy,
+                )
+            # Overwrite new location related data with previous values.
+            self._data.loc = self._prev_data.loc
+
+        else:
+            self._ignored_update_reasons.clear()
+
+            if (address := self._data.loc.address) == self._data.loc.place:
+                address = None
+            if last_seen != prev_seen:
+                if address not in self._addresses:
+                    self._addresses = [address]
+            elif self._data.loc.address != self._prev_data.loc.address:
+                if address not in self._addresses:
+                    if len(self._addresses) < 2:
+                        self._addresses.append(address)
+                    else:
+                        self._addresses = [address]
 
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        # Get a shortcut to this member's data. Can't guarantee it's the same dict every
-        # update, or that there is even data for this member every update, so need to
-        # update shortcut each time.
-        self._data = self.coordinator.data["members"].get(self.unique_id)
-
         if self.available:
-            # If nothing important has changed, then skip the update altogether.
-            if (filtered_data := self._filtered_data()) == self._prev_data:
-                return
-
-            # Check if we should effectively throw out new location data.
-            last_seen = self._data[ATTR_LAST_SEEN]
-            prev_seen = self._prev_data[ATTR_LAST_SEEN]
-            max_gps_acc = self._options.get(CONF_MAX_GPS_ACCURACY)
-            bad_last_seen = last_seen < prev_seen
-            bad_accuracy = (
-                max_gps_acc is not None and self.location_accuracy > max_gps_acc
-            )
-            if bad_last_seen or bad_accuracy:
-                if bad_last_seen:
-                    LOGGER.warning(
-                        "%s: Ignoring location update because "
-                        "last_seen (%s) < previous last_seen (%s)",
-                        self.entity_id,
-                        last_seen,
-                        prev_seen,
-                    )
-                if bad_accuracy:
-                    LOGGER.warning(
-                        "%s: Ignoring location update because "
-                        "expected GPS accuracy (%i) is not met: %i",
-                        self.entity_id,
-                        max_gps_acc,
-                        self.location_accuracy,
-                    )
-                for k in (ATTR_LATITUDE, ATTR_LONGITUDE, ATTR_GPS_ACCURACY):
-                    self._data[k] = self._prev_data[k]
-
-            self._prev_data = filtered_data
+            # Since _process_update might overwrite parts of the Member data (e.g., if
+            # gps_accuracy is bad), and since the original data needs to be re-processed
+            # when a config option changes (e.g., GPS accuracy limit), make a copy of
+            # the data before processing it.
+            # Note that it's possible that there is no data for this Member on some
+            # updates (e.g., if a Member is no longer visible and this Entity is in the
+            # process of being removed.)
+            self._data = deepcopy(self.coordinator.data.get(self._attr_unique_id))
+            if self._data:
+                if (
+                    self._data.status == MemberStatus.VALID
+                    and self._prev_data.status == MemberStatus.VALID
+                ):
+                    self._process_update()
+                # Keep copy of processed data used to update entity.
+                # New server data will be compared against this on next update.
+                self._prev_data = self._data
+        else:
+            self._data = None
 
         super()._handle_coordinator_update()
+
+    @property
+    def name(self) -> str | None:
+        """Return the name of the entity."""
+        if self._data:
+            self._attr_name = self._data.name
+        return self._attr_name
 
     @property
     def force_update(self) -> bool:
@@ -195,19 +236,11 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
         return False
 
     @property
-    def available(self) -> bool:
-        """Return if entity is available."""
-        # Guard against member not being in last update for some reason.
-        return super().available and self._data is not None
-
-    @property
     def entity_picture(self) -> str | None:
         """Return the entity picture to use in the frontend, if any."""
-        if self.available:
-            self._attr_entity_picture = self._data[ATTR_ENTITY_PICTURE]
-        return super().entity_picture
-
-    # All of the following will only be called if self.available is True.
+        if self._data:
+            self._attr_entity_picture = self._data.entity_picture
+        return self._attr_entity_picture
 
     @property
     def battery_level(self) -> int | None:
@@ -215,12 +248,14 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
 
         Percentage from 0-100.
         """
-        return cast(int, self._data[ATTR_BATTERY_LEVEL])
+        if not self._data or self._data.status != MemberStatus.VALID:
+            return None
+        return self._data.battery_level
 
     @property
-    def source_type(self) -> str:
+    def source_type(self) -> SourceType:
         """Return the source type, eg gps or router, of the device."""
-        return SOURCE_TYPE_GPS
+        return SourceType.GPS
 
     @property
     def location_accuracy(self) -> int:
@@ -228,40 +263,101 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
 
         Value in meters.
         """
-        return cast(int, self._data[ATTR_GPS_ACCURACY])
+        if not self._data or self._data.status != MemberStatus.VALID:
+            return 0
+        return cast(int, self._data.loc.gps_accuracy)
 
     @property
     def driving(self) -> bool:
         """Return if driving."""
+        if not self._data or self._data.status != MemberStatus.VALID:
+            return False
         if (driving_speed := self._options.get(CONF_DRIVING_SPEED)) is not None:
-            if self._data[ATTR_SPEED] >= driving_speed:
+            if cast(float, self._data.loc.speed) >= driving_speed:
                 return True
-        return cast(bool, self._data[ATTR_DRIVING])
+        return cast(bool, self._data.loc.driving)
 
     @property
-    def location_name(self) -> str | None:
-        """Return a location name for the current location of the device."""
+    def state(self) -> str | None:
+        """Return the state of the device."""
+        # If update from server is available, but location details are missing, set
+        # state to "unknown"; "reason" attribute will indicate why (e.g., Member is not
+        # sharing location details, etc.)
+        if not self._data or self._data.status != MemberStatus.VALID:
+            return STATE_UNKNOWN
+
         if self._options.get(SHOW_DRIVING) and self.driving:
-            return "Driving"
-        return None
+            return STATE_DRIVING
+        return super().state
 
     @property
     def latitude(self) -> float | None:
         """Return latitude value of the device."""
-        return cast(float, self._data[ATTR_LATITUDE])
+        if not self._data or self._data.status != MemberStatus.VALID:
+            return None
+        return cast(float, self._data.loc.latitude)
 
     @property
     def longitude(self) -> float | None:
         """Return longitude value of the device."""
-        return cast(float, self._data[ATTR_LONGITUDE])
+        if not self._data or self._data.status != MemberStatus.VALID:
+            return None
+        return cast(float, self._data.loc.longitude)
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Return entity specific state attributes."""
-        attrs = {
-            k: v
-            for k, v in self._data.items()
-            if k in _EXTRA_ATTRIBUTES and v is not None
+        attrs_unknown = {
+            ATTR_ADDRESS: None,
+            ATTR_AT_LOC_SINCE: None,
+            ATTR_BATTERY_CHARGING: None,
+            ATTR_DRIVING: None,
+            ATTR_LAST_SEEN: None,
+            ATTR_PLACE: None,
+            ATTR_SPEED: None,
+            ATTR_WIFI_ON: None,
         }
-        attrs[ATTR_DRIVING] = self.driving
-        return attrs
+
+        if not self._data:
+            self._warned_loc_unknown = False
+            return attrs_unknown
+
+        if self._data.status == MemberStatus.VALID:
+            self._warned_loc_unknown = False
+
+            address1: str | None = None
+            address2: str | None = None
+            with suppress(IndexError):
+                address1 = self._addresses[0]
+                address2 = self._addresses[1]
+            if address1 and address2:
+                address: str | None = " / ".join(sorted([address1, address2]))
+            else:
+                address = address1 or address2
+
+            attrs: dict[str, Any] = {
+                ATTR_ADDRESS: address,
+                ATTR_AT_LOC_SINCE: self._data.loc.at_loc_since,
+                ATTR_BATTERY_CHARGING: self._data.battery_charging,
+                ATTR_DRIVING: self.driving,
+                ATTR_LAST_SEEN: self._data.loc.last_seen,
+                ATTR_PLACE: self._data.loc.place,
+                ATTR_SPEED: self._data.loc.speed,
+                ATTR_WIFI_ON: self._data.wifi_on,
+            }
+            if self._ignored_update_reasons:
+                attrs[ATTR_IGNORED_UPDATE_REASONS] = self._ignored_update_reasons
+            return attrs
+
+        if not self._warned_loc_unknown:
+            self._warned_loc_unknown = True
+            if self._data.status == MemberStatus.NOT_SHARING:
+                LOGGER.warning("%s is not sharing location data", self)
+            else:
+                LOGGER.warning(
+                    "Location data is missing for %s: %s", self, self._data.err_msg
+                )
+
+        if self._data.status == MemberStatus.NOT_SHARING:
+            return attrs_unknown | {ATTR_REASON: "Member is not sharing location"}
+        return attrs_unknown | {ATTR_REASON: self._data.err_msg}
