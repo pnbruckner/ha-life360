@@ -2,29 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 from typing import Any, cast
 
-from homeassistant.components.device_tracker import SOURCE_TYPE_GPS
+from homeassistant.components.device_tracker import SourceType
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    ATTR_BATTERY_CHARGING,
-    ATTR_BATTERY_LEVEL,
-    ATTR_ENTITY_PICTURE,
-    ATTR_GPS_ACCURACY,
-    ATTR_LATITUDE,
-    ATTR_LONGITUDE,
-    ATTR_NAME,
-    CONF_PREFIX,
-)
+from homeassistant.const import ATTR_BATTERY_CHARGING
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddEntitiesCallback, EntityPlatform
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-)
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     ATTR_ADDRESS,
@@ -41,15 +28,18 @@ from .const import (
     LOGGER,
     SHOW_DRIVING,
 )
+from .coordinator import Life360DataUpdateCoordinator, Life360Member
 
-_EXTRA_ATTRIBUTES = (
-    ATTR_ADDRESS,
-    ATTR_AT_LOC_SINCE,
-    ATTR_BATTERY_CHARGING,
-    ATTR_LAST_SEEN,
-    ATTR_PLACE,
-    ATTR_SPEED,
-    ATTR_WIFI_ON,
+_LOC_ATTRS = (
+    "address",
+    "at_loc_since",
+    "driving",
+    "gps_accuracy",
+    "last_seen",
+    "latitude",
+    "longitude",
+    "place",
+    "speed",
 )
 
 
@@ -57,43 +47,42 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up the device tracker platform."""
-    account = hass.data[DOMAIN]["accounts"][entry.unique_id]
-    coordinator = account["coordinator"]
-    tracked_members = hass.data[DOMAIN]["tracked_members"]
-    logged_circles = hass.data[DOMAIN]["logged_circles"]
-    logged_places = hass.data[DOMAIN]["logged_places"]
+    coordinator = hass.data[DOMAIN].coordinators[entry.entry_id]
+    tracked_members = hass.data[DOMAIN].tracked_members
+    logged_circles = hass.data[DOMAIN].logged_circles
+    logged_places = hass.data[DOMAIN].logged_places
 
     @callback
     def process_data(new_members_only: bool = True) -> None:
         """Process new Life360 data."""
-        for circle_id, circle in coordinator.data["circles"].items():
+        for circle_id, circle in coordinator.data.circles.items():
             if circle_id not in logged_circles:
                 logged_circles.append(circle_id)
-                LOGGER.info("Circle: %s", circle["name"])
+                LOGGER.debug("Circle: %s", circle.name)
 
             new_places = []
-            for place_id, place in circle["places"].items():
+            for place_id, place in circle.places.items():
                 if place_id not in logged_places:
                     logged_places.append(place_id)
                     new_places.append(place)
             if new_places:
-                msg = f"Places from {circle['name']}:"
+                msg = f"Places from {circle.name}:"
                 for place in new_places:
-                    msg += f"\n- name: {place['name']}"
-                    msg += f"\n  latitude: {place['latitude']}"
-                    msg += f"\n  longitude: {place['longitude']}"
-                    msg += f"\n  radius: {place['radius']}"
+                    msg += f"\n- name: {place.name}"
+                    msg += f"\n  latitude: {place.latitude}"
+                    msg += f"\n  longitude: {place.longitude}"
+                    msg += f"\n  radius: {place.radius}"
                 LOGGER.debug(msg)
 
         new_entities = []
-        for member_id, member in coordinator.data["members"].items():
-            tracked_by_account = tracked_members.get(member_id)
-            if new_member := not tracked_by_account:
-                tracked_members[member_id] = entry.unique_id
-                LOGGER.info("Member: %s", member[ATTR_NAME])
+        for member_id, member in coordinator.data.members.items():
+            tracked_by_entry = tracked_members.get(member_id)
+            if new_member := not tracked_by_entry:
+                tracked_members[member_id] = entry.entry_id
+                LOGGER.debug("Member: %s (%s)", member.name, entry.unique_id)
             if (
                 new_member
-                or tracked_by_account == entry.unique_id
+                or tracked_by_entry == entry.entry_id
                 and not new_members_only
             ):
                 new_entities.append(Life360DeviceTracker(coordinator, member_id))
@@ -101,32 +90,29 @@ async def async_setup_entry(
             async_add_entities(new_entities)
 
     process_data(new_members_only=False)
-    account["unsub"] = coordinator.async_add_listener(process_data)
+    entry.async_on_unload(coordinator.async_add_listener(process_data))
 
 
-class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
+class Life360DeviceTracker(
+    CoordinatorEntity[Life360DataUpdateCoordinator], TrackerEntity
+):
     """Life360 Device Tracker."""
 
-    def __init__(self, coordinator: DataUpdateCoordinator, member_id: str) -> None:
+    _attr_attribution = ATTRIBUTION
+    _attr_unique_id: str
+
+    def __init__(
+        self, coordinator: Life360DataUpdateCoordinator, member_id: str
+    ) -> None:
         """Initialize Life360 Entity."""
         super().__init__(coordinator)
-        self._attr_attribution = ATTRIBUTION
         self._attr_unique_id = member_id
 
-        self._data = coordinator.data["members"][self.unique_id]
+        self._data: Life360Member | None = coordinator.data.members[member_id]
+        self._prev_data = self._data
 
-        self._attr_name = self._data[ATTR_NAME]
-        self._attr_entity_picture = self._data[ATTR_ENTITY_PICTURE]
-
-        self._prev_data = self._filtered_data()
-
-    def _filtered_data(self) -> dict[str, Any]:
-        # Filter out data that should be ignored when checking if anything has changed
-        # since last update. For now that's address, since that often constantly changes
-        # (back and forth between two values), even when nothing else changes. If it
-        # isn't filtered out, there will be way more state changes which would basically
-        # be useless (and spam the database, and possibly the log.)
-        return {k: v for k, v in self._data.items() if k != ATTR_ADDRESS}
+        self._attr_name = self._data.name
+        self._attr_entity_picture = self._data.entity_picture
 
     @property
     def _options(self) -> Mapping[str, Any]:
@@ -134,32 +120,20 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
         return cast(Mapping[str, Any], self.coordinator.config_entry.options)
 
     @callback
-    def add_to_platform_start(
-        self,
-        hass: HomeAssistant,
-        platform: EntityPlatform,
-        parallel_updates: asyncio.Semaphore | None,
-    ) -> None:
-        """Start adding an entity to a platform."""
-        platform.entity_namespace = self._options.get(CONF_PREFIX)
-        super().add_to_platform_start(hass, platform, parallel_updates)
-
-    @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        # Get a shortcut to this member's data. Can't guarantee it's the same dict every
-        # update, or that there is even data for this member every update, so need to
-        # update shortcut each time.
-        self._data = self.coordinator.data["members"].get(self.unique_id)
-
+        # Get a shortcut to this Member's data. This needs to be updated each time since
+        # coordinator provides a new Life360Member object each time, and it's possible
+        # that there is no data for this Member on some updates.
         if self.available:
-            # If nothing important has changed, then skip the update altogether.
-            if (filtered_data := self._filtered_data()) == self._prev_data:
-                return
+            self._data = self.coordinator.data.members.get(self._attr_unique_id)
+        else:
+            self._data = None
 
+        if self._data:
             # Check if we should effectively throw out new location data.
-            last_seen = self._data[ATTR_LAST_SEEN]
-            prev_seen = self._prev_data[ATTR_LAST_SEEN]
+            last_seen = self._data.last_seen
+            prev_seen = self._prev_data.last_seen
             max_gps_acc = self._options.get(CONF_MAX_GPS_ACCURACY)
             bad_last_seen = last_seen < prev_seen
             bad_accuracy = (
@@ -177,15 +151,16 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
                 if bad_accuracy:
                     LOGGER.warning(
                         "%s: Ignoring location update because "
-                        "expected GPS accuracy (%i) is not met: %i",
+                        "expected GPS accuracy (%0.1f) is not met: %i",
                         self.entity_id,
                         max_gps_acc,
                         self.location_accuracy,
                     )
-                for k in (ATTR_LATITUDE, ATTR_LONGITUDE, ATTR_GPS_ACCURACY):
-                    self._data[k] = self._prev_data[k]
+                # Overwrite new location related data with previous values.
+                for attr in _LOC_ATTRS:
+                    setattr(self._data, attr, getattr(self._prev_data, attr))
 
-            self._prev_data = filtered_data
+            self._prev_data = self._data
 
         super()._handle_coordinator_update()
 
@@ -195,19 +170,11 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
         return False
 
     @property
-    def available(self) -> bool:
-        """Return if entity is available."""
-        # Guard against member not being in last update for some reason.
-        return super().available and self._data is not None
-
-    @property
     def entity_picture(self) -> str | None:
         """Return the entity picture to use in the frontend, if any."""
-        if self.available:
-            self._attr_entity_picture = self._data[ATTR_ENTITY_PICTURE]
+        if self._data:
+            self._attr_entity_picture = self._data.entity_picture
         return super().entity_picture
-
-    # All of the following will only be called if self.available is True.
 
     @property
     def battery_level(self) -> int | None:
@@ -215,12 +182,14 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
 
         Percentage from 0-100.
         """
-        return cast(int, self._data[ATTR_BATTERY_LEVEL])
+        if not self._data:
+            return None
+        return self._data.battery_level
 
     @property
-    def source_type(self) -> str:
+    def source_type(self) -> SourceType:
         """Return the source type, eg gps or router, of the device."""
-        return SOURCE_TYPE_GPS
+        return SourceType.GPS
 
     @property
     def location_accuracy(self) -> int:
@@ -228,15 +197,19 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
 
         Value in meters.
         """
-        return cast(int, self._data[ATTR_GPS_ACCURACY])
+        if not self._data:
+            return 0
+        return self._data.gps_accuracy
 
     @property
     def driving(self) -> bool:
         """Return if driving."""
+        if not self._data:
+            return False
         if (driving_speed := self._options.get(CONF_DRIVING_SPEED)) is not None:
-            if self._data[ATTR_SPEED] >= driving_speed:
+            if self._data.speed >= driving_speed:
                 return True
-        return cast(bool, self._data[ATTR_DRIVING])
+        return self._data.driving
 
     @property
     def location_name(self) -> str | None:
@@ -248,20 +221,38 @@ class Life360DeviceTracker(CoordinatorEntity, TrackerEntity):
     @property
     def latitude(self) -> float | None:
         """Return latitude value of the device."""
-        return cast(float, self._data[ATTR_LATITUDE])
+        if not self._data:
+            return None
+        return self._data.latitude
 
     @property
     def longitude(self) -> float | None:
         """Return longitude value of the device."""
-        return cast(float, self._data[ATTR_LONGITUDE])
+        if not self._data:
+            return None
+        return self._data.longitude
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Return entity specific state attributes."""
-        attrs = {
-            k: v
-            for k, v in self._data.items()
-            if k in _EXTRA_ATTRIBUTES and v is not None
+        if not self._data:
+            return {
+                ATTR_ADDRESS: None,
+                ATTR_AT_LOC_SINCE: None,
+                ATTR_BATTERY_CHARGING: None,
+                ATTR_DRIVING: None,
+                ATTR_LAST_SEEN: None,
+                ATTR_PLACE: None,
+                ATTR_SPEED: None,
+                ATTR_WIFI_ON: None,
+            }
+        return {
+            ATTR_ADDRESS: self._data.address,
+            ATTR_AT_LOC_SINCE: self._data.at_loc_since,
+            ATTR_BATTERY_CHARGING: self._data.battery_charging,
+            ATTR_DRIVING: self.driving,
+            ATTR_LAST_SEEN: self._data.last_seen,
+            ATTR_PLACE: self._data.place,
+            ATTR_SPEED: self._data.speed,
+            ATTR_WIFI_ON: self._data.wifi_on,
         }
-        attrs[ATTR_DRIVING] = self.driving
-        return attrs
