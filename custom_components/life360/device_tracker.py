@@ -9,7 +9,14 @@ from datetime import datetime
 from functools import partial
 from typing import Any, cast
 
-from homeassistant.components.device_tracker import SourceType
+try:
+    from homeassistant.components.device_tracker import SourceType
+    source_type_type = SourceType
+    source_type_gps = SourceType.GPS
+except ImportError:
+    from homeassistant.components.device_tracker import SOURCE_TYPE_GPS
+    source_type_type = str
+    source_type_gps = SOURCE_TYPE_GPS
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_BATTERY_CHARGING, ATTR_GPS_ACCURACY, STATE_UNKNOWN
@@ -253,9 +260,9 @@ class Life360DeviceTracker(
         return self._data.battery_level
 
     @property
-    def source_type(self) -> SourceType:
+    def source_type(self) -> source_type_type:
         """Return the source type, eg gps or router, of the device."""
-        return SourceType.GPS
+        return source_type_gps
 
     @property
     def location_accuracy(self) -> int:
