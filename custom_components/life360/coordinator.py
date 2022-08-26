@@ -9,6 +9,7 @@ from enum import IntEnum
 from itertools import groupby
 from typing import Any, NewType, cast
 
+from aiohttp import ClientTimeout
 from life360 import Life360, Life360Error, LoginError
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
@@ -23,6 +24,7 @@ from homeassistant.const import (
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import entity_registry
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.entity_registry import RegistryEntry, RegistryEntryDisabler
 from homeassistant.helpers.typing import UNDEFINED, UndefinedType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -31,7 +33,6 @@ from homeassistant.util.distance import convert
 import homeassistant.util.dt as dt_util
 
 from .const import (
-    COMM_MAX_RETRIES,
     COMM_TIMEOUT,
     CONF_AUTHORIZATION,
     DATA_CENTRAL_COORDINATOR,
@@ -262,8 +263,9 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         """Add a config entry & its coordinator."""
         # See if server can be accessed successfully. Let caller handle any exception.
         api = Life360(
-            timeout=COMM_TIMEOUT,
-            max_retries=COMM_MAX_RETRIES,
+            session=async_create_clientsession(
+                self.hass, timeout=ClientTimeout(total=COMM_TIMEOUT)
+            ),
             authorization=coordinator.config_entry.data[CONF_AUTHORIZATION],
         )
         await self._async_retrieve_data(api, "get_circles")
@@ -523,7 +525,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
     ) -> list[dict[str, Any]]:
         """Get data from Life360."""
         try:
-            return await self.hass.async_add_executor_job(getattr(api, func), *args)
+            return await getattr(api, func)(*args)
         except LoginError as exc:
             LOGGER.debug("Login error: %s", exc)
             raise ConfigEntryAuthFailed(exc) from exc
@@ -771,17 +773,26 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
                 self._dump_result(result, short=True)
                 continue
 
+            new_cfg_entry = self._configs[new_cfg_id].coordinator.config_entry
+
+            old_reg_entry = self._reg_entry(member_id)
             reg_entry = self._update_entity_registry(
                 member_id, cfg_id=new_cfg_id, name=member.name
             )
             if not reg_entry.disabled:
                 result[new_cfg_id][member_id] = member
+            elif not old_reg_entry.disabled:
+                LOGGER.warning(
+                    "%s reassigned to %s, but it has "
+                    '"Enable newly added entities" turned off',
+                    _member_str(reg_entry),
+                    new_cfg_entry.title,
+                )
 
             if cur_cfg_entry:
                 cur_account = f"account {cur_cfg_entry.title}"
             else:
                 cur_account = f"deleted account <{cur_cfg_id}>"
-            new_cfg_entry = self._configs[new_cfg_id].coordinator.config_entry
             LOGGER.debug(
                 "%s reassigned from %s to %s%s",
                 _member_str(reg_entry, member_id),
@@ -837,6 +848,17 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
 
         return result
 
+    def _reg_entry(self, member_id: MemberID) -> RegistryEntry:
+        """Return current Entity Registry entry for Member."""
+        return self._entity_reg.entities[
+            cast(
+                str,
+                self._entity_reg.async_get_entity_id(
+                    Platform.DEVICE_TRACKER, DOMAIN, member_id
+                ),
+            )
+        ]
+
     def _update_entity_registry(
         self,
         member_id: MemberID,
@@ -848,13 +870,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
 
         Returns new Entity Registry entry.
         """
-        entity_id = cast(
-            str,
-            self._entity_reg.async_get_entity_id(
-                Platform.DEVICE_TRACKER, DOMAIN, member_id
-            ),
-        )
-        reg_entry = self._entity_reg.entities[entity_id]
+        reg_entry = self._reg_entry(member_id)
         if cfg_id is UNDEFINED or reg_entry.disabled_by is RegistryEntryDisabler.USER:
             disable_by: RegistryEntryDisabler | UndefinedType | None = UNDEFINED
         elif (
@@ -865,7 +881,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         else:
             disable_by = None
         return self._entity_reg.async_update_entity(
-            entity_id,
+            reg_entry.entity_id,
             config_entry_id=cfg_id,
             disabled_by=disable_by,
             original_name=name,
