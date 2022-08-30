@@ -14,21 +14,19 @@ from life360 import Life360, Life360Error, LoginError
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import (
-    EVENT_COMPONENT_LOADED,
     LENGTH_FEET,
     LENGTH_KILOMETERS,
     LENGTH_METERS,
     LENGTH_MILES,
     Platform,
 )
-from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import entity_registry
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.entity_registry import RegistryEntry, RegistryEntryDisabler
 from homeassistant.helpers.typing import UNDEFINED, UndefinedType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from homeassistant.setup import ATTR_COMPONENT
 from homeassistant.util.distance import convert
 import homeassistant.util.dt as dt_util
 
@@ -219,7 +217,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
     """Life360 central data update coordinator."""
 
     data: None
-    _setup_complete = False
+    _init_setup_complete = False
     _pref_disable_polling = True
     _remove_self_listener: CALLBACK_TYPE | None = None
     _refresh_locked_for_config: str | None = None
@@ -234,62 +232,73 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         self.config_entry = None
 
         self._entity_reg = entity_registry.async_get(hass)
+        self._init_auth_failures: set[str] = set()
         self._configs: dict[str, ConfigData] = {}
         self._refresh_lock = asyncio.Lock()
         self._logged: dict[CircleID, set[PlaceID]] = {}
-
-        @callback
-        def life360_loaded(event: Event) -> bool:
-            """Return if life360 integration was loaded."""
-            return event.data[ATTR_COMPONENT] == DOMAIN
-
-        async def async_setup_done(*_) -> None:
-            """Indicate setup has completed and initiate first full refresh."""
-            self._setup_complete = True
-            self._update_pref_disable_polling(
-                all(
-                    cfg_data.coordinator.config_entry.pref_disable_polling
-                    for cfg_data in self._configs.values()
-                )
-            )
-            if self._configs:
-                await self.async_refresh()
-
-        hass.bus.async_listen(EVENT_COMPONENT_LOADED, async_setup_done, life360_loaded)
 
     async def async_add_coordinator(
         self, coordinator: Life360DataUpdateCoordinator
     ) -> None:
         """Add a config entry & its coordinator."""
+        cfg_entry = coordinator.config_entry
+
         # See if server can be accessed successfully. Let caller handle any exception.
         api = Life360(
             session=async_create_clientsession(
                 self.hass, timeout=ClientTimeout(total=COMM_TIMEOUT)
             ),
-            authorization=coordinator.config_entry.data[CONF_AUTHORIZATION],
+            authorization=cfg_entry.data[CONF_AUTHORIZATION],
         )
-        await self._async_retrieve_data(api, "get_circles")
+        try:
+            await self._async_retrieve_data(api, "get_circles")
+        except ConfigEntryAuthFailed:
+            if not self._init_setup_complete:
+                self._init_auth_failures.add(cfg_entry.entry_id)
+            raise
 
         # Success. Add api & config and refresh if setup complete.
 
         # If this is the second phase of a reload, then lock has already been obtained.
         # If not, get the lock now.
-        have_lock = self._refresh_locked_for_config == coordinator.config_entry.entry_id
+        have_lock = self._refresh_locked_for_config == cfg_entry.entry_id
         if not have_lock:
             await self._refresh_lock.acquire()
 
-        self._configs[coordinator.config_entry.entry_id] = ConfigData(api, coordinator)
-        coordinator.config_entry.async_on_unload(
-            coordinator.config_entry.add_update_listener(self._async_cfg_entry_updated)
-        )
+        self._configs[cfg_entry.entry_id] = ConfigData(api, coordinator)
+
+        if not self._init_setup_complete:
+            # Has async_add_coordinator been called for all registered accounts
+            # (i.e., configs)?
+            if set(self._configs) | self._init_auth_failures >= {
+                cfg_entry.entry_id
+                for cfg_entry in self.hass.config_entries.async_entries(DOMAIN)
+            }:
+                self._init_setup_complete = True
+                self._update_pref_disable_polling(
+                    all(
+                        cfg_data.coordinator.config_entry.pref_disable_polling
+                        for cfg_data in self._configs.values()
+                    )
+                )
 
         try:
-            if self._setup_complete:
-                await self._async_cfg_entry_updated(None, coordinator.config_entry)
+            if self._init_setup_complete:
+                if cfg_entry.pref_disable_polling != self._pref_disable_polling:
+                    # Newly added configs are set to match polling setting for all
+                    # previously added configs. User can change it afterwards if
+                    # desired.
+                    self.hass.config_entries.async_update_entry(
+                        cfg_entry,
+                        pref_disable_polling=self._pref_disable_polling,
+                    )
                 await self._async_refresh(log_failures=True, cancellable=False)
             else:
                 coordinator.async_set_updated_data(Members())
         finally:
+            cfg_entry.async_on_unload(
+                cfg_entry.add_update_listener(self._async_cfg_entry_updated)
+            )
             if have_lock:
                 self._refresh_locked_for_config = None
             self._refresh_lock.release()
@@ -409,11 +418,11 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
     ) -> None:
         """Refresh data."""
 
-        # In order to properly handle Member -> Config Entry assignment, all currently
+        # In order to properly handle Member -> Config Entry assignment, all initially
         # registered accounts (i.e., Config Entries) must get a chance to be setup and,
         # hence, added as clients. Wait until that has happened before performing any
         # refresh.
-        if not self._setup_complete:
+        if not self._init_setup_complete:
             return
 
         self._scheduled_refresh = scheduled
@@ -770,7 +779,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
                     _member_str(reg_entry, member_id),
                     cast(ConfigEntry, cur_cfg_entry).title,
                 )
-                self._dump_result(result, short=True)
+                # self._dump_result(result, short=True)
                 continue
 
             new_cfg_entry = self._configs[new_cfg_id].coordinator.config_entry
@@ -800,7 +809,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
                 new_cfg_entry.title,
                 ": disabled" if reg_entry.disabled else "",
             )
-            self._dump_result(result, short=True)
+            # self._dump_result(result, short=True)
 
         for member_id in remove_assignments:
             # Disconnect entity from config entry. This will cause the corresponding
@@ -844,7 +853,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
                 cfg_entry.title,
                 ": disabled" if reg_entry.disabled else "",
             )
-            self._dump_result(result, short=True)
+            # self._dump_result(result, short=True)
 
         return result
 
