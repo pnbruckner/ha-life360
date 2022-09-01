@@ -1,7 +1,7 @@
 {
   "domain": "life360",
   "name": "Life360",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "config_flow": true,
   "documentation": "https://github.com/pnbruckner/ha-life360/blob/master/README.md",
   "issue_tracker": "https://github.com/pnbruckner/ha-life360/issues",
