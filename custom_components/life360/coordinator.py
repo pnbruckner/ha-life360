@@ -222,7 +222,6 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
     _refresh_locked_for_config: str | None = None
     _update_task: asyncio.Task[None] | None = None
     _scheduled_refresh: bool
-    _cancellable_update: bool
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize data update coordinator."""
@@ -255,7 +254,10 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
                 self._init_auth_failures.add(cfg_entry.entry_id)
             raise
 
-        # Success. Add api & config and refresh if setup complete.
+        # Success. For now provide coordinator with an empty data set, then add api &
+        # config and refresh if setup complete.
+
+        coordinator.async_set_updated_data(Members())
 
         # If this is the second phase of a reload, then lock has already been obtained.
         # If not, get the lock now.
@@ -266,11 +268,12 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         self._configs[cfg_entry.entry_id] = ConfigData(api, coordinator)
 
         if not self._init_setup_complete:
-            # Has async_add_coordinator been called for all registered accounts
+            # Has async_add_coordinator been called for all registered/enabled accounts
             # (i.e., configs)?
             if set(self._configs) | self._init_auth_failures >= {
                 cfg_entry.entry_id
                 for cfg_entry in self.hass.config_entries.async_entries(DOMAIN)
+                if not cfg_entry.disabled_by
             }:
                 self._init_setup_complete = True
                 self._update_pref_disable_polling(
@@ -280,34 +283,30 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
                     )
                 )
 
-        try:
-            if self._init_setup_complete:
-                if cfg_entry.pref_disable_polling != self._pref_disable_polling:
-                    # Newly added configs are set to match polling setting for all
-                    # previously added configs. User can change it afterwards if
-                    # desired.
-                    self.hass.config_entries.async_update_entry(
-                        cfg_entry,
-                        pref_disable_polling=self._pref_disable_polling,
-                    )
-                await self._async_refresh(log_failures=True, cancellable=False)
-            else:
-                coordinator.async_set_updated_data(Members())
-        finally:
-            cfg_entry.async_on_unload(
-                cfg_entry.add_update_listener(self._async_cfg_entry_updated)
-            )
-            if have_lock:
-                self._refresh_locked_for_config = None
-            self._refresh_lock.release()
+        if have_lock:
+            self._refresh_locked_for_config = None
+        self._refresh_lock.release()
+
+        if self._init_setup_complete:
+            if cfg_entry.pref_disable_polling != self._pref_disable_polling:
+                # Newly added configs are set to match polling setting for all
+                # previously added configs. User can change it afterwards if desired.
+                self.hass.config_entries.async_update_entry(
+                    cfg_entry,
+                    pref_disable_polling=self._pref_disable_polling,
+                )
+            self.hass.async_create_task(self.async_refresh())
+        cfg_entry.async_on_unload(
+            cfg_entry.add_update_listener(self._async_cfg_entry_updated)
+        )
 
     async def async_unloading_config(self, entry: ConfigEntry) -> None:
         """Config entry is being unloaded."""
-        # If a cancellable refresh is in progress, cancel it, but either way, prevent
-        # another from starting before removing config so there is no chance any Member
-        # assigned to this config will get reassigned before unload is complete (which
-        # could cause Entity Registry updates from unloading and refresh tasks to
-        # interfer with each other.)
+        # If a refresh is in progress, cancel it and prevent another from starting
+        # before removing config so there is no chance any Member assigned to this
+        # config will get reassigned before unload is complete (which could cause Entity
+        # Registry updates from unloading and refresh tasks to interfer with each
+        # other.)
         if self._update_task:
             self._update_task.cancel()
         await self._refresh_lock.acquire()
@@ -408,11 +407,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         self.configure_scheduled_refreshes()
 
     async def _async_refresh(
-        self,
-        log_failures=True,
-        raise_on_auth_failed=False,
-        scheduled=False,
-        cancellable=True,
+        self, log_failures=True, raise_on_auth_failed=False, scheduled=False
     ) -> None:
         """Refresh data."""
 
@@ -424,7 +419,6 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
             return
 
         self._scheduled_refresh = scheduled
-        self._cancellable_update = cancellable
         await super()._async_refresh(log_failures, raise_on_auth_failed, scheduled)
         if not self.last_update_success:
             exc = cast(Exception, self.last_exception)
@@ -437,8 +431,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         members: dict[MemberID, list[tuple[CircleID, Member]]] = {}
         cfg_circle_ids: dict[str, set[CircleID] | None] = {}
 
-        if self._cancellable_update:
-            self._update_task = asyncio.current_task()
+        self._update_task = asyncio.current_task()
 
         try:
             for cfg_id, cfg_data in self._configs.items():
