@@ -29,6 +29,11 @@ will still get registered in the Entity Registry and will have `device_tracker` 
 keeps things consistent when Members "come and go" for these reasons. Of course, any entity can be hidden or
 disabled via the Entity Registry if desired.
 
+Lastly, a `binary_sensor` has been added for each account (aka config, aka integration) that indicates
+if server communications are working ok - i.e., if it's "online". By default the name will be
+"life360 online (USERNAME)", and the entity ID will be `binary_sensor.life360_online_username`, but they can,
+of course, be changed via the Entities page, or the entity can be disabled if you'd rather not see it.
+
 ## Versions
 
 This has been tested with Home Assistant 2022.8.6, using Python 3.9. If you're using different versions your
