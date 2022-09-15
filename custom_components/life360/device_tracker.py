@@ -37,18 +37,16 @@ from .const import (
     ATTRIBUTION,
     CONF_DRIVING_SPEED,
     CONF_MAX_GPS_ACCURACY,
-    DATA_CENTRAL_COORDINATOR,
-    DOMAIN,
     LOGGER,
     SHOW_DRIVING,
     STATE_DRIVING,
 )
 from .coordinator import (
-    Life360CentralDataUpdateCoordinator,
     Life360DataUpdateCoordinator,
     Member,
     MemberID,
     MemberStatus,
+    life360_central_coordinator,
 )
 
 
@@ -58,10 +56,9 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the device tracker platform."""
-    coordinator = cast(
-        Life360CentralDataUpdateCoordinator,
-        hass.data[DOMAIN][DATA_CENTRAL_COORDINATOR],
-    ).config_coordinator(config_entry.entry_id)
+    coordinator = life360_central_coordinator(hass).config_coordinator(
+        config_entry.entry_id
+    )
     tracked_members: set[MemberID] = set()
 
     def remove_tracked_member(memberid: MemberID) -> None:
@@ -70,6 +67,9 @@ async def async_setup_entry(
 
     def process_data() -> None:
         """Process new Life360 Member data."""
+        if not coordinator.last_update_success:
+            return
+
         if create_entities := set(coordinator.data) - tracked_members:
             new_entities: list[Life360DeviceTracker] = []
             for member_id in create_entities:

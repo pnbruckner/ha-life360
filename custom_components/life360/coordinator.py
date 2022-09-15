@@ -48,13 +48,21 @@ def init_life360_coordinator(hass: HomeAssistant) -> None:
     )
 
 
+def life360_central_coordinator(
+    hass: HomeAssistant,
+) -> Life360CentralDataUpdateCoordinator:
+    """Return Life360 central coordinator."""
+    return cast(
+        Life360CentralDataUpdateCoordinator,
+        hass.data[DOMAIN][DATA_CENTRAL_COORDINATOR],
+    )
+
+
 async def async_unloading_life360_config_entry(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> None:
     """Config entry is being unloaded."""
-    await cast(
-        Life360CentralDataUpdateCoordinator, hass.data[DOMAIN][DATA_CENTRAL_COORDINATOR]
-    ).async_unloading_config(entry)
+    await life360_central_coordinator(hass).async_unloading_config(entry)
 
 
 @dataclass
@@ -152,10 +160,7 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize data update coordinator."""
-        self._central_coordinator = cast(
-            Life360CentralDataUpdateCoordinator,
-            hass.data[DOMAIN][DATA_CENTRAL_COORDINATOR],
-        )
+        self._central_coordinator = life360_central_coordinator(hass)
 
         # No periodic updates. Central coordinator will provide manual updates.
         super().__init__(hass, LOGGER, name="", update_method=self._async_first_refresh)
@@ -187,8 +192,10 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
     async def _async_first_refresh(self) -> Members:
         """Perform first refresh."""
         self.update_method = None
-        await self._central_coordinator.async_add_coordinator(self)
-        return self.data
+        result = await self._central_coordinator.async_add_coordinator(self)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
     @callback
     def _unschedule_refresh(self) -> None:
@@ -230,18 +237,16 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         self.config_entry = None
 
         self._entity_reg = entity_registry.async_get(hass)
-        self._init_auth_failures: set[str] = set()
         self._configs: dict[str, ConfigData] = {}
         self._refresh_lock = asyncio.Lock()
         self._logged: dict[CircleID, set[PlaceID]] = {}
 
     async def async_add_coordinator(
         self, coordinator: Life360DataUpdateCoordinator
-    ) -> None:
+    ) -> Members | Exception:
         """Add a config entry & its coordinator."""
         cfg_entry = coordinator.config_entry
 
-        # See if server can be accessed successfully. Let caller handle any exception.
         api = Life360(
             session=async_get_clientsession(self.hass),
             timeout=COMM_TIMEOUT,
@@ -249,15 +254,11 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         )
         try:
             await self._async_retrieve_data(api, "get_circles")
-        except ConfigEntryAuthFailed:
-            if not self._init_setup_complete:
-                self._init_auth_failures.add(cfg_entry.entry_id)
-            raise
-
-        # Success. For now provide coordinator with an empty data set, then add api &
-        # config and refresh if setup complete.
-
-        coordinator.async_set_updated_data(Members())
+        except (ConfigEntryAuthFailed, UpdateFailed) as exc:
+            result: Members | Exception = exc
+        else:
+            # For now provide coordinator with an empty data set.
+            result = Members()
 
         # If this is the second phase of a reload, then lock has already been obtained.
         # If not, get the lock now.
@@ -270,7 +271,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         if not self._init_setup_complete:
             # Has async_add_coordinator been called for all registered/enabled accounts
             # (i.e., configs)?
-            if set(self._configs) | self._init_auth_failures >= {
+            if set(self._configs) >= {
                 cfg_entry.entry_id
                 for cfg_entry in self.hass.config_entries.async_entries(DOMAIN)
                 if not cfg_entry.disabled_by
@@ -299,6 +300,8 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         cfg_entry.async_on_unload(
             cfg_entry.add_update_listener(self._async_cfg_entry_updated)
         )
+
+        return result
 
     async def async_unloading_config(self, entry: ConfigEntry) -> None:
         """Config entry is being unloaded."""

@@ -42,7 +42,7 @@ from .coordinator import (
     init_life360_coordinator,
 )
 
-PLATFORMS = [Platform.DEVICE_TRACKER]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.DEVICE_TRACKER]
 
 CONF_ACCOUNTS = "accounts"
 
@@ -141,8 +141,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             options=DEFAULT_OPTIONS | hass.data[DOMAIN][DATA_CONFIG_OPTIONS],
         )
 
-    coordinator = Life360DataUpdateCoordinator(hass)
-    await coordinator.async_config_entry_first_refresh()
+    # Config specific coordinator will register itself with central coordinator.
+    await Life360DataUpdateCoordinator(hass).async_refresh()
 
     # Set up components for our platforms.
     hass.config_entries.async_setup_platforms(entry, PLATFORMS)
