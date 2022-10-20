@@ -123,8 +123,7 @@ CONFIG_SCHEMA = vol.Schema(
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up integration."""
-    hass.data[DOMAIN] = {}
-    hass.data[DOMAIN][DATA_CONFIG_OPTIONS] = config.get(DOMAIN, {})
+    hass.data[DOMAIN] = {DATA_CONFIG_OPTIONS: config.get(DOMAIN, {})}
 
     init_life360_coordinator(hass)
     return True

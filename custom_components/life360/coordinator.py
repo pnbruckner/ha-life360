@@ -26,12 +26,13 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_registry import RegistryEntry, RegistryEntryDisabler
 from homeassistant.helpers.typing import UNDEFINED, UndefinedType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 try:
     from homeassistant.util.unit_conversion import DistanceConverter
     convert = DistanceConverter.convert
 except ImportError:
     from homeassistant.util.distance import convert
-import homeassistant.util.dt as dt_util
+from homeassistant.util.unit_system import METRIC_SYSTEM
 
 from .const import (
     COMM_TIMEOUT,
@@ -589,7 +590,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
             address = address1 or address2
 
         speed = max(0, float(loc["speed"]) * SPEED_FACTOR_MPH)
-        if self.hass.config.units.is_metric:
+        if self.hass.config.units is METRIC_SYSTEM:
             speed = convert(speed, LENGTH_MILES, LENGTH_KILOMETERS)
 
         return (
