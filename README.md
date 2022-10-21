@@ -36,7 +36,7 @@ of course, be changed via the Entities page, or the entity can be disabled if yo
 
 ## Versions
 
-This has been tested with Home Assistant 2022.9.7 & 2022.10.4, using Python 3.9. If you're using different versions your
+This has been tested with Home Assistant 2022.9.7 & 2022.10.5, using Python 3.9. If you're using different versions your
 mileage may vary. If you'd still like to give it a try, let me know what versions you're using and I'll try
 to test with them first.
 

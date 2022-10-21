@@ -27,15 +27,16 @@ from homeassistant.helpers.entity_registry import RegistryEntry, RegistryEntryDi
 from homeassistant.helpers.typing import UNDEFINED, UndefinedType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
+
 try:
     from homeassistant.util.unit_conversion import DistanceConverter
+
     convert = DistanceConverter.convert
 except ImportError:
     from homeassistant.util.distance import convert
 from homeassistant.util.unit_system import METRIC_SYSTEM
 
 from .const import (
-    COMM_MAX_RETRIES,
     COMM_TIMEOUT,
     CONF_AUTHORIZATION,
     DATA_CENTRAL_COORDINATOR,
@@ -256,7 +257,6 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         api = Life360(
             session=async_get_clientsession(self.hass),
             timeout=COMM_TIMEOUT,
-            max_retries=COMM_MAX_RETRIES,
             authorization=cfg_entry.data[CONF_AUTHORIZATION],
         )
         try:

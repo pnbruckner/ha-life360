@@ -11,10 +11,12 @@ from typing import Any, cast
 
 try:
     from homeassistant.components.device_tracker import SourceType
+
     source_type_type = SourceType
     source_type_gps = SourceType.GPS
 except ImportError:
     from homeassistant.components.device_tracker import SOURCE_TYPE_GPS
+
     source_type_type = str
     source_type_gps = SOURCE_TYPE_GPS
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
