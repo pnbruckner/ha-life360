@@ -37,6 +37,7 @@ except ImportError:
 from homeassistant.util.unit_system import METRIC_SYSTEM
 
 from .const import (
+    COMM_MAX_RETRIES,
     COMM_TIMEOUT,
     CONF_AUTHORIZATION,
     DATA_CENTRAL_COORDINATOR,
@@ -257,6 +258,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         api = Life360(
             session=async_get_clientsession(self.hass),
             timeout=COMM_TIMEOUT,
+            max_retries=COMM_MAX_RETRIES,
             authorization=cfg_entry.data[CONF_AUTHORIZATION],
         )
         try:
