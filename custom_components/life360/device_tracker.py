@@ -9,6 +9,7 @@ from datetime import datetime
 from functools import partial
 from typing import Any, cast
 
+# SourceType was new in 2022.9
 try:
     from homeassistant.components.device_tracker import SourceType
 

@@ -144,7 +144,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await Life360DataUpdateCoordinator(hass).async_refresh()
 
     # Set up components for our platforms.
-    hass.config_entries.async_setup_platforms(entry, PLATFORMS)
+    # async_forward_entry_setups was new in 2022.8
+    try:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except AttributeError:
+        hass.config_entries.async_setup_platforms(entry, PLATFORMS)
     return True
 
 
