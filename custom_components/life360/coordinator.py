@@ -177,6 +177,24 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
             self.config_entry.add_update_listener(self._async_cfg_entry_updated)
         )
 
+    # async_set_update_error was new in 2022.8
+    if not hasattr(DataUpdateCoordinator, "async_set_update_error"):
+
+        @callback
+        def async_set_update_error(self, err: Exception) -> None:
+            """Manually set an error, log the message and notify listeners."""
+            self.last_exception = err
+            if self.last_update_success:
+                self.logger.error("Error requesting %s data: %s", self.name, err)
+                self.last_update_success = False
+                # self._listeners was changed to dict in 2022.7
+                if isinstance(self._listeners, dict):
+                    for update_callback, _ in list(self._listeners.values()):
+                        update_callback()
+                else:
+                    for update_callback in self._listeners:
+                        update_callback()
+
     async def async_request_refresh(self) -> None:
         """Request a refresh."""
         await self._central_coordinator.async_request_refresh()
