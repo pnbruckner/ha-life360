@@ -11,7 +11,7 @@ from typing import Any, NewType, cast
 
 from life360 import Life360, Life360Error, LoginError
 
-from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.config_entries import ConfigEntries, ConfigEntry, ConfigEntryState
 from homeassistant.const import (
     LENGTH_FEET,
     LENGTH_KILOMETERS,
@@ -245,6 +245,32 @@ class ConfigData:
 ConfigMembers = dict[str, Members]
 
 
+# reload_lock was added to ConfigEntry in 2022.7
+class ReloadLockedConfigEntries(ConfigEntries):
+    """Add locked ConfigEntry reloading."""
+    def __init__(self, config_entries: ConfigEntries) -> None:
+        """Initialize ReloadLockedConfigEntries."""
+        self.__class__ = type(
+            config_entries.__class__.__name__,
+            (self.__class__, config_entries.__class__),
+            {},
+        )
+        self.__dict__ = config_entries.__dict__
+        self.reload_lock: dict[str, asyncio.Lock] = {}
+
+    async def async_reload(self, entry_id: str) -> bool:
+        """Reload an entry.
+
+        Use our reload lock since entry doesn't have one.
+        """
+        if entry_id in self.reload_lock:
+            reload_lock = self.reload_lock[entry_id]
+        else:
+            reload_lock = self.reload_lock[entry_id] = asyncio.Lock()
+        async with reload_lock:
+            return await super().async_reload(entry_id)
+
+
 class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
     """Life360 central data update coordinator."""
 
@@ -353,15 +379,22 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
             # Members are assigned to this config so wait for unload to complete.
             # Also, if this is the first phase of a reload, signal to setup of same
             # config that lock has already been obtained.
-            if is_reload := entry.reload_lock.locked():
+            # reload_lock was added to ConfigEntry in 2022.7
+            if hasattr(entry, "reload_lock"):
+                reload_lock = entry.reload_lock
+            else:
+                reload_lock = cast(
+                    ReloadLockedConfigEntries, self.hass.config_entries
+                ).reload_lock[entry.entry_id]
+            if is_reload := reload_lock.locked():
                 self._refresh_locked_for_config = entry.entry_id
 
             async def async_wait_for_unload_done():
                 await unload_done.wait()
                 if is_reload:
                     # Wait for reload to complete.
-                    await entry.reload_lock.acquire()
-                    entry.reload_lock.release()
+                    await reload_lock.acquire()
+                    reload_lock.release()
                     # If setup phase didn't run then release the lock here.
                     still_have_lock = self._refresh_locked_for_config == entry.entry_id
                     if still_have_lock:

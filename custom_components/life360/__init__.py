@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
+from typing import cast
 
 import voluptuous as vol
 
 from homeassistant.components.device_tracker import CONF_SCAN_INTERVAL
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntries, ConfigEntry
 from homeassistant.const import (
     CONF_EXCLUDE,
     CONF_INCLUDE,
@@ -38,6 +40,7 @@ from .const import (
 )
 from .coordinator import (
     Life360DataUpdateCoordinator,
+    ReloadLockedConfigEntries,
     async_unloading_life360_config_entry,
     init_life360_coordinator,
 )
@@ -123,6 +126,12 @@ CONFIG_SCHEMA = vol.Schema(
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up integration."""
+    # reload_lock was added to ConfigEntry in 2022.7
+    if not hasattr(ConfigEntry, "reload_lock"):
+        hass.config_entries = cast(
+            ConfigEntries, ReloadLockedConfigEntries(hass.config_entries)
+        )
+
     hass.data[DOMAIN] = {DATA_CONFIG_OPTIONS: config.get(DOMAIN, {})}
 
     init_life360_coordinator(hass)
