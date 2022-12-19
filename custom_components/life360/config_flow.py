@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, cast
 
-from life360 import Life360, Life360Error, LoginError
+from life360 import Life360, Life360Error, LoginError  # type: ignore[attr-defined]
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow

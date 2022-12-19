@@ -18,8 +18,8 @@ try:
 except ImportError:
     from homeassistant.components.device_tracker import SOURCE_TYPE_GPS
 
-    source_type_type = str
-    source_type_gps = SOURCE_TYPE_GPS
+    source_type_type = str  # type: ignore[assignment, misc]
+    source_type_gps = SOURCE_TYPE_GPS  # type: ignore[assignment]
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_BATTERY_CHARGING, ATTR_GPS_ACCURACY, STATE_UNKNOWN
@@ -134,7 +134,9 @@ class Life360DeviceTracker(
             return f"{name} ({self.entity_id})"
         return self.entity_id
 
-    async def _async_config_entry_updated(self, _, config_entry: ConfigEntry) -> None:
+    async def _async_config_entry_updated(
+        self, hass: HomeAssistant, config_entry: ConfigEntry
+    ) -> None:
         """Run when the config entry has been updated."""
         if self._options != (new_options := config_entry.options.copy()):
             self._options = new_options
@@ -161,8 +163,10 @@ class Life360DeviceTracker(
                 # entity needs to be removed here.
                 await self.async_remove()
 
-    def _process_update(self):
+    def _process_update(self) -> None:
         """Process new Member data."""
+        assert self._data
+
         # Check if we should effectively throw out new location data.
         last_seen = cast(datetime, self._data.loc.last_seen)
         prev_seen = cast(datetime, self._prev_data.loc.last_seen)

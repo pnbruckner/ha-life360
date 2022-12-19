@@ -9,7 +9,7 @@ from enum import IntEnum
 from itertools import groupby
 from typing import Any, NewType, cast
 
-from life360 import Life360, Life360Error, LoginError
+from life360 import Life360, Life360Error, LoginError  # type: ignore[attr-defined]
 
 from homeassistant.config_entries import ConfigEntries, ConfigEntry, ConfigEntryState
 from homeassistant.const import (
@@ -192,7 +192,7 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
                     for update_callback, _ in list(self._listeners.values()):
                         update_callback()
                 else:
-                    for update_callback in self._listeners:
+                    for update_callback in self._listeners:  # type: ignore[unreachable]
                         update_callback()
 
     async def async_request_refresh(self) -> None:
@@ -211,7 +211,9 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
             self._update = update
             self._central_coordinator.configure_scheduled_refreshes()
 
-    async def _async_cfg_entry_updated(self, *_) -> None:
+    async def _async_cfg_entry_updated(
+        self, hass: HomeAssistant, cfg_entry: ConfigEntry
+    ) -> None:
         """Run when the config entry has been updated."""
         self.name = self.config_entry.title
 
@@ -248,6 +250,7 @@ ConfigMembers = dict[str, Members]
 # reload_lock was added to ConfigEntry in 2022.7
 class ReloadLockedConfigEntries(ConfigEntries):
     """Add locked ConfigEntry reloading."""
+
     def __init__(self, config_entries: ConfigEntries) -> None:
         """Initialize ReloadLockedConfigEntries."""
         self.__class__ = type(
@@ -368,7 +371,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         await self._refresh_lock.acquire()
         del self._configs[entry.entry_id]
 
-        def done(*, release_lock=True, ok_to_refresh=True) -> None:
+        def done(*, release_lock: bool = True, ok_to_refresh: bool = True) -> None:
             if release_lock:
                 self._refresh_lock.release()
             self.configure_scheduled_refreshes()
@@ -389,7 +392,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
             if is_reload := reload_lock.locked():
                 self._refresh_locked_for_config = entry.entry_id
 
-            async def async_wait_for_unload_done():
+            async def async_wait_for_unload_done() -> None:
                 await unload_done.wait()
                 if is_reload:
                     # Wait for reload to complete.
@@ -454,12 +457,14 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
                 return True
         return False
 
-    async def _async_cfg_entry_updated(self, _, cfg_entry: ConfigEntry) -> None:
+    async def _async_cfg_entry_updated(
+        self, hass: HomeAssistant, cfg_entry: ConfigEntry
+    ) -> None:
         """Run when a config entry has been updated."""
         if self._pref_disable_polling != cfg_entry.pref_disable_polling:
             self._update_pref_disable_polling(cfg_entry.pref_disable_polling)
 
-    def _update_pref_disable_polling(self, pref_disable_polling) -> None:
+    def _update_pref_disable_polling(self, pref_disable_polling: bool) -> None:
         """Update pref_disable_polling for all configs."""
         self._pref_disable_polling = pref_disable_polling
         for cfg_data in self._configs.values():
@@ -469,8 +474,9 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
             )
         self.configure_scheduled_refreshes()
 
-    async def _async_refresh(
-        self, log_failures=True, raise_on_auth_failed=False, scheduled=False
+    # Parameter raise_on_entry_error was new in 2022.12.
+    async def _async_refresh(  # type: ignore[no-untyped-def]
+        self, *args, **kwargs
     ) -> None:
         """Refresh data."""
 
@@ -481,8 +487,11 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         if not self._init_setup_complete:
             return
 
-        self._scheduled_refresh = scheduled
-        await super()._async_refresh(log_failures, raise_on_auth_failed, scheduled)
+        if len(args) >= 3:
+            self._scheduled_refresh = args[2]
+        else:
+            self._scheduled_refresh = kwargs.get("scheduled", False)
+        await super()._async_refresh(*args, **kwargs)
         if not self.last_update_success:
             exc = cast(Exception, self.last_exception)
             for cfg_data in self._configs.values():
@@ -518,7 +527,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         result = self._assign_members(
             circles, cfg_circle_ids, self._group_sort_members(members)
         )
-        self._dump_result(result)
+        self._dump_result(result)  # type: ignore[no-untyped-call]
         for cfg_id, data in result.items():
             coordinator = self._configs[cfg_id].coordinator
             if coordinator.update or not self._scheduled_refresh:
@@ -588,7 +597,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
     ) -> list[dict[str, Any]]:
         """Get data from Life360."""
         try:
-            return await getattr(api, func)(*args)
+            return cast(list[dict[str, Any]], await getattr(api, func)(*args))
         except LoginError as exc:
             LOGGER.debug("Login error: %s", exc)
             raise ConfigEntryAuthFailed(exc) from exc
@@ -777,7 +786,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
 
         LOGGER.info("auth_failures: %s", auth_failures)
         LOGGER.info("assignable_configs: %s", assignable_configs)
-        self._dump_result(result, msg="_assign_members start", short=True)
+        self._dump_result(result, msg="_assign_members start", short=True)  # type: ignore[no-untyped-call]
         LOGGER.info("registered_members: %s", registered_members)
         LOGGER.info("current_member_assignments: %s", current_member_assignments)
         LOGGER.info("keep_assigned_members: %s", keep_assigned_members)
@@ -950,7 +959,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
             original_name=name,
         )
 
-    def _dump_result(self, result, msg="", short=False):
+    def _dump_result(self, result, msg="", short=False):  # type: ignore[no-untyped-def]
         if msg:
             msg += ": "
         msg += "result:"
