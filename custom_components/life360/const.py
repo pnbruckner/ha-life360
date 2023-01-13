@@ -13,15 +13,18 @@ COMM_MAX_RETRIES = 3
 COMM_TIMEOUT = ClientTimeout(sock_connect=15, total=60)
 SPEED_FACTOR_MPH = 2.25
 SPEED_DIGITS = 1
-UPDATE_INTERVAL = timedelta(seconds=10)
+UPDATE_INTERVAL_SEC = 10
+UPDATE_INTERVAL = timedelta(seconds=UPDATE_INTERVAL_SEC)
 
 ATTR_ADDRESS = "address"
 ATTR_AT_LOC_SINCE = "at_loc_since"
+ATTR_CIRCLES = "circles"
 ATTR_DRIVING = "driving"
 ATTR_LAST_SEEN = "last_seen"
 ATTR_PLACE = "place"
 ATTR_REASON = "reason"
 ATTR_SPEED = "speed"
+ATTR_STATUS = "status"
 ATTR_WIFI_ON = "wifi_on"
 ATTR_IGNORED_UPDATE_REASONS = "ignored_update_reasons"
 

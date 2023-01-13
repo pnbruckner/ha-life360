@@ -1,6 +1,7 @@
 """Support for Life360 device tracking."""
 
 from __future__ import annotations
+import asyncio
 
 from collections.abc import Mapping
 from contextlib import suppress
@@ -22,7 +23,12 @@ except ImportError:
     source_type_gps = SOURCE_TYPE_GPS  # type: ignore[assignment]
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_BATTERY_CHARGING, ATTR_GPS_ACCURACY, STATE_UNKNOWN
+from homeassistant.const import (
+    ATTR_BATTERY_CHARGING,
+    ATTR_GPS_ACCURACY,
+    ATTR_NAME,
+    STATE_UNKNOWN,
+)
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -30,12 +36,14 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     ATTR_ADDRESS,
     ATTR_AT_LOC_SINCE,
+    ATTR_CIRCLES,
     ATTR_DRIVING,
     ATTR_IGNORED_UPDATE_REASONS,
     ATTR_LAST_SEEN,
     ATTR_PLACE,
     ATTR_REASON,
     ATTR_SPEED,
+    ATTR_STATUS,
     ATTR_WIFI_ON,
     ATTRIBUTION,
     CONF_DRIVING_SPEED,
@@ -43,12 +51,14 @@ from .const import (
     LOGGER,
     SHOW_DRIVING,
     STATE_DRIVING,
+    UPDATE_INTERVAL_SEC,
 )
 from .coordinator import (
     Life360DataUpdateCoordinator,
     Member,
     MemberID,
     MemberStatus,
+    STATUS_DESCRIPTION,
     life360_central_coordinator,
 )
 
@@ -80,7 +90,6 @@ async def async_setup_entry(
                 tracked_members.add(member_id)
                 entity.async_on_remove(partial(remove_tracked_member, member_id))
                 new_entities.append(entity)
-            LOGGER.info("%s: add entities: %s", config_entry.title, new_entities)
             async_add_entities(new_entities)
 
     process_data()
@@ -122,6 +131,11 @@ class Life360DeviceTracker(
                 self._async_config_entry_updated
             )
         )
+
+    @property
+    def member_id(self) -> MemberID:
+        """Return Member ID."""
+        return self._attr_unique_id
 
     def __repr__(self) -> str:
         """Return identification string."""
@@ -222,7 +236,7 @@ class Life360DeviceTracker(
             # Note that it's possible that there is no data for this Member on some
             # updates (e.g., if a Member is no longer visible and this Entity is in the
             # process of being removed.)
-            self._data = deepcopy(self.coordinator.data.get(self._attr_unique_id))
+            self._data = deepcopy(self.coordinator.data.get(self.member_id))
             if self._data:
                 if (
                     self._data.status == MemberStatus.VALID
@@ -236,6 +250,22 @@ class Life360DeviceTracker(
             self._data = None
 
         super()._handle_coordinator_update()
+
+    async def async_update(self) -> None:
+        """Update the entity.
+
+        Only used by the generic entity update service.
+        """
+        # Ignore manual update requests if the entity is disabled
+        # or there is no data for Member.
+        if not self.enabled or not self._data:
+            return
+
+        await self.coordinator.async_update_location(
+            self.member_id, self._data.circle_stats
+        )
+        await asyncio.sleep(UPDATE_INTERVAL_SEC / 2)
+        await super().async_update()
 
     @property
     def name(self) -> str | None:
@@ -328,6 +358,7 @@ class Life360DeviceTracker(
             ATTR_ADDRESS: None,
             ATTR_AT_LOC_SINCE: None,
             ATTR_BATTERY_CHARGING: None,
+            ATTR_CIRCLES: None,
             ATTR_DRIVING: None,
             ATTR_LAST_SEEN: None,
             ATTR_PLACE: None,
@@ -356,6 +387,13 @@ class Life360DeviceTracker(
                 ATTR_ADDRESS: address,
                 ATTR_AT_LOC_SINCE: self._data.loc.at_loc_since,
                 ATTR_BATTERY_CHARGING: self._data.battery_charging,
+                ATTR_CIRCLES: [
+                    {
+                        ATTR_NAME: circle_stat.name,
+                        ATTR_STATUS: STATUS_DESCRIPTION[circle_stat.status],
+                    }
+                    for circle_stat in self._data.circle_stats.values()
+                ],
                 ATTR_DRIVING: self.driving,
                 ATTR_LAST_SEEN: self._data.loc.last_seen,
                 ATTR_PLACE: self._data.loc.place,
