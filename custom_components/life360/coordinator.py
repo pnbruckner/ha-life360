@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import IntEnum
 from itertools import groupby
-from typing import Any, NewType, cast
+from typing import Any, Awaitable, NewType, cast
 
 from life360 import Life360, Life360Error, LoginError  # type: ignore[attr-defined]
 
@@ -109,6 +109,14 @@ class MemberStatus(IntEnum):
     NOT_SHARING = 0
 
 
+STATUS_DESCRIPTION = {
+    MemberStatus.VALID: "valid",
+    MemberStatus.MISSING_W_REASON: "location information missing",
+    MemberStatus.MISSING_NO_REASON: "location information missing",
+    MemberStatus.NOT_SHARING: "not sharing location information",
+}
+
+
 @dataclass
 class MemberLocation:
     """Life360 Member location data."""
@@ -122,6 +130,14 @@ class MemberLocation:
     longitude: float | None = None
     place: str | None = None
     speed: float | None = None
+
+
+@dataclass
+class CircleStatus:
+    """Life360 Member's Circle status."""
+
+    name: str
+    status: MemberStatus
 
 
 @dataclass
@@ -139,6 +155,9 @@ class Member:
 
     status: MemberStatus = MemberStatus.VALID
     err_msg: str | None = field(default=None, compare=False)
+    circle_stats: dict[CircleID, CircleStatus] = field(
+        default_factory=dict, compare=False
+    )
 
     # Since a Member can exist in more than one Circle, and the data retrieved for the
     # Member might be different in each (e.g., some might not share location info but
@@ -211,6 +230,14 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
             self._update = update
             self._central_coordinator.configure_scheduled_refreshes()
 
+    async def async_update_location(
+        self, member_id: MemberID, circle_stats: dict[CircleID, CircleStatus]
+    ) -> None:
+        """Send update location request for Member in given Circles."""
+        await self._central_coordinator.async_update_location(
+            self, member_id, circle_stats
+        )
+
     async def _async_cfg_entry_updated(
         self, hass: HomeAssistant, cfg_entry: ConfigEntry
     ) -> None:
@@ -242,6 +269,7 @@ class ConfigData:
 
     api: Life360
     coordinator: Life360DataUpdateCoordinator
+    circle_ids: set[CircleID] = field(default_factory=set)
 
 
 ConfigMembers = dict[str, Members]
@@ -436,6 +464,58 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         """Return coordinator for config."""
         return self._configs[cfg_id].coordinator
 
+    async def async_update_location(
+        self,
+        coordinator: Life360DataUpdateCoordinator,
+        member_id: MemberID,
+        circle_stats: dict[CircleID, CircleStatus],
+    ) -> None:
+        """Send update location request for Member in given Circles."""
+
+        member_name = coordinator.data[member_id].name
+        circle_ids = set(circle_stats)
+
+        async def send_update_location(api: Life360, circle_id: CircleID) -> None:
+            """Send update location request to Life360 server."""
+            msg = (
+                f"location update request for {member_name} "
+                f"via {circle_stats[circle_id].name}"
+            )
+            try:
+                self.logger.debug("Sending %s", msg)
+                result = await api.update_location(circle_id, member_id)
+            except Life360Error as exc:
+                self.logger.error(
+                    "Error sending %s: %s: %s", msg, exc.__class__.__name__, exc
+                )
+            else:
+                self.logger.debug("Sent %s successfully: %s", msg, result)
+
+        async with self._refresh_lock:
+            tasks: list[Awaitable] = []
+
+            def update_via_cfg(cfg_data: ConfigData) -> None:
+                """Send update location request for Circles accessible via config."""
+                for circle_id in circle_ids & cfg_data.circle_ids:
+                    tasks.append(send_update_location(cfg_data.api, circle_id))
+                circle_ids.difference_update(cfg_data.circle_ids)
+
+            crd_cfg_id = coordinator.config_entry.entry_id
+            update_via_cfg(self._configs[crd_cfg_id])
+
+            if circle_ids:
+                cfg_data_list = [
+                    cfg_data
+                    for cfg_id, cfg_data in self._configs.items()
+                    if cfg_id != crd_cfg_id
+                ]
+                for cfg_data in cfg_data_list:
+                    update_via_cfg(cfg_data)
+                    if not circle_ids:
+                        break
+
+            await asyncio.gather(*tasks)
+
     async def async_refresh(self) -> None:
         """Refresh data and log errors."""
         async with self._refresh_lock:
@@ -515,8 +595,10 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
                     cfg_data.coordinator.async_set_update_error(exc)
                     cfg_data.coordinator.config_entry.async_start_reauth(self.hass)
                     cfg_circle_ids[cfg_id] = None
+                    self._configs[cfg_id].circle_ids = set()
                 else:
                     cfg_circle_ids[cfg_id] = circle_ids
+                    self._configs[cfg_id].circle_ids = circle_ids
 
         except asyncio.CancelledError:
             return None
@@ -527,7 +609,12 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         result = self._assign_members(
             circles, cfg_circle_ids, self._group_sort_members(members)
         )
-        self._dump_result(result)  # type: ignore[no-untyped-call]
+        for _, data in result.items():
+            for mid, member in data.items():
+                member.circle_stats = {
+                    cid: CircleStatus(circles[cid].name, mem.status)
+                    for cid, mem in members[mid]
+                }
         for cfg_id, data in result.items():
             coordinator = self._configs[cfg_id].coordinator
             if coordinator.update or not self._scheduled_refresh:
@@ -542,8 +629,8 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         members: dict[MemberID, list[tuple[CircleID, Member]]],
     ) -> set[CircleID]:
         """Retrieve data using a Life360 account."""
-        LOGGER.info(
-            "Retrieving data for %s",
+        self.logger.debug(
+            "Retrieving %s data",
             self._configs[cfg_id].coordinator.config_entry.title,
         )
         api = self._configs[cfg_id].api
@@ -599,10 +686,10 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         try:
             return cast(list[dict[str, Any]], await getattr(api, func)(*args))
         except LoginError as exc:
-            LOGGER.debug("Login error: %s", exc)
+            self.logger.debug("Login error: %s", exc)
             raise ConfigEntryAuthFailed(exc) from exc
         except Life360Error as exc:
-            LOGGER.debug("%s: %s", exc.__class__.__name__, exc)
+            self.logger.debug("%s: %s", exc.__class__.__name__, exc)
             raise UpdateFailed(exc) from exc
 
     def _process_member_data(
@@ -685,7 +772,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         """Log any new Circles and Places."""
         for circle_id, circle in circles.items():
             if circle_id not in self._logged:
-                LOGGER.debug("Circle: %s", circle.name)
+                self.logger.debug("Circle: %s", circle.name)
                 self._logged[circle_id] = set()
             if new_places := set(circle.places) - self._logged[circle_id]:
                 self._logged[circle_id] |= new_places
@@ -696,7 +783,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
                     msg += f"\n  latitude: {place.latitude}"
                     msg += f"\n  longitude: {place.longitude}"
                     msg += f"\n  radius: {place.radius}"
-                LOGGER.debug(msg)
+                self.logger.debug(msg)
 
     def _group_sort_members(
         self,
@@ -784,17 +871,6 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         remove_assignments = reassignable_members - seen_members
         make_assignments = seen_members - assigned_members
 
-        LOGGER.info("auth_failures: %s", auth_failures)
-        LOGGER.info("assignable_configs: %s", assignable_configs)
-        self._dump_result(result, msg="_assign_members start", short=True)  # type: ignore[no-untyped-call]
-        LOGGER.info("registered_members: %s", registered_members)
-        LOGGER.info("current_member_assignments: %s", current_member_assignments)
-        LOGGER.info("keep_assigned_members: %s", keep_assigned_members)
-        LOGGER.info("seen_members: %s", seen_members)
-        LOGGER.info("remove_assignments: %s", remove_assignments)
-        LOGGER.info("make_assignments: %s", make_assignments)
-        LOGGER.info("check_assignments: %s", check_assignments)
-
         def find_a_config(cfg_ids: set[str], circle_ids: tuple[CircleID]) -> str | None:
             """Find a config that saw one of the Circles."""
             # Circles with best data come first.
@@ -837,12 +913,6 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
             if new_cfg_id == cur_cfg_id:
                 reg_entry = self._update_entity_registry(member_id, name=member.name)
                 result[cur_cfg_id][member_id] = member
-                LOGGER.info(
-                    "%s keeping assigned to %s",
-                    _member_str(reg_entry, member_id),
-                    cast(ConfigEntry, cur_cfg_entry).title,
-                )
-                # self._dump_result(result, short=True)
                 continue
 
             new_cfg_entry = self._configs[new_cfg_id].coordinator.config_entry
@@ -854,7 +924,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
             if not reg_entry.disabled:
                 result[new_cfg_id][member_id] = member
             elif not old_reg_entry.disabled:
-                LOGGER.warning(
+                self.logger.warning(
                     "%s reassigned to %s, but it has "
                     '"Enable newly added entities" turned off',
                     _member_str(reg_entry),
@@ -865,14 +935,13 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
                 cur_account = f"account {cur_cfg_entry.title}"
             else:
                 cur_account = f"deleted account <{cur_cfg_id}>"
-            LOGGER.debug(
+            self.logger.debug(
                 "%s reassigned from %s to %s%s",
                 _member_str(reg_entry, member_id),
                 cur_account,
                 new_cfg_entry.title,
                 ": disabled" if reg_entry.disabled else "",
             )
-            # self._dump_result(result, short=True)
 
         for member_id in remove_assignments:
             # Disconnect entity from config entry. This will cause the corresponding
@@ -880,10 +949,12 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
             # Member becomes visible again. Or the user can decide to delete the entity
             # registry entry.
             reg_entry = self._update_entity_registry(member_id, cfg_id=None)
-            LOGGER.warning(
+            self.logger.warning(
                 "%s is no longer in any visible Circle", _member_str(reg_entry)
             )
-            LOGGER.debug("%s is no longer visible", _member_str(reg_entry, member_id))
+            self.logger.debug(
+                "%s is no longer visible", _member_str(reg_entry, member_id)
+            )
 
         for member_id in make_assignments:
             cfg_id = None
@@ -910,13 +981,12 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
             if not reg_entry.disabled:
                 result[cfg_id][member_id] = member
 
-            LOGGER.debug(
+            self.logger.debug(
                 "%s assigned to account %s%s",
                 _member_str(reg_entry, member_id),
                 cfg_entry.title,
                 ": disabled" if reg_entry.disabled else "",
             )
-            # self._dump_result(result, short=True)
 
         return result
 
@@ -958,32 +1028,6 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
             disabled_by=disable_by,
             original_name=name,
         )
-
-    def _dump_result(self, result, msg="", short=False):  # type: ignore[no-untyped-def]
-        if msg:
-            msg += ": "
-        msg += "result:"
-        if len(result):
-            for cfg_id, mems in result.items():
-                cfg_entry = cast(
-                    ConfigEntry, self.hass.config_entries.async_get_entry(cfg_id)
-                )
-                msg += f"\n  {cfg_id} {cfg_entry.title}:"
-                if len(mems):
-                    if short:
-                        msg += f" {{{', '.join(f'{mem_id}: {mem.name if mem else None}' for mem_id, mem in mems.items())}}}"
-                    else:
-                        for mem_id, mem in mems.items():
-                            msg += f"\n    {mem_id}:"
-                            msg += f"\n      {mem.name}"
-                            msg += f"\n      {mem.loc}"
-                            msg += f"\n      {mem.status.name}"
-                            msg += f"\n      {mem.err_msg}"
-                else:
-                    msg += f" {mems}"
-        else:
-            msg += f" {result}"
-        LOGGER.info(msg)
 
 
 def _member_str(reg_entry: RegistryEntry, member_id: MemberID | None = None) -> str:
