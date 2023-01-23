@@ -481,8 +481,8 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
                 f"location update request for {member_name} "
                 f"via {circle_stats[circle_id].name}"
             )
+            self.logger.debug("Sending %s", msg)
             try:
-                self.logger.debug("Sending %s", msg)
                 result = await api.update_location(circle_id, member_id)
             except Life360Error as exc:
                 self.logger.error(
