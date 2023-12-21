@@ -1,12 +1,12 @@
 {
   "domain": "life360",
   "name": "Life360",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "config_flow": true,
   "documentation": "https://github.com/pnbruckner/ha-life360/blob/master/README.md",
   "issue_tracker": "https://github.com/pnbruckner/ha-life360/issues",
   "codeowners": ["@pnbruckner"],
-  "requirements": ["life360==6.0.0"],
+  "requirements": ["life360==6.0.1"],
   "iot_class": "cloud_polling",
   "loggers": ["life360"]
 }
