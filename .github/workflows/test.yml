@@ -19,6 +19,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
+        hass-test-cc-version: ["0.13.107"]
 
     steps:
     - uses: actions/checkout@v4
@@ -32,7 +33,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip setuptools wheel
-        pip install -r requirements_test.txt
+        pip install pytest-homeassistant-custom-component==${{ matrix.hass-test-cc-version }}
     - name: Test with pytest
       run: |
         pytest
