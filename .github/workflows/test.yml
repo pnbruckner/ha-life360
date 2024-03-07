@@ -19,7 +19,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
-        hass-test-cc-version: ["0.13.107"]
+        hass-test-cc-version: ["0.13.103", "0.13.107"]
 
     steps:
     - uses: actions/checkout@v4
