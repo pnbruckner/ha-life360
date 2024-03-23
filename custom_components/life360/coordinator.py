@@ -1,7 +1,6 @@
 """DataUpdateCoordinator for the Life360 integration."""
 
 from __future__ import annotations
-from homeassistant.const import Platform
 
 import asyncio
 from dataclasses import dataclass, field
@@ -9,16 +8,15 @@ from datetime import datetime
 from enum import IntEnum
 from itertools import groupby
 from typing import Any, NewType, cast
-
+from homeassistant.const import Platform
 from life360 import Life360, Life360Error, LoginError  # type: ignore[attr-defined]
 
 from homeassistant.config_entries import ConfigEntries, ConfigEntry, ConfigEntryState
-
-
 from homeassistant.const import UnitOfLength
-
-
-
+LENGTH_FEET = UnitOfLength.FEET
+LENGTH_KILOMETERS = UnitOfLength.KILOMETERS
+LENGTH_METERS = UnitOfLength.METERS
+LENGTH_MILES = UnitOfLength.MILES
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import entity_registry
@@ -54,12 +52,7 @@ def init_life360_coordinator(hass: HomeAssistant) -> None:
     hass.data[DOMAIN][DATA_CENTRAL_COORDINATOR] = Life360CentralDataUpdateCoordinator(
         hass
     )
-    
-    
-LENGTH_FEET = UnitOfLength.FEET
-LENGTH_KILOMETERS = UnitOfLength.KILOMETERS
-LENGTH_METERS = UnitOfLength.METERS
-LENGTH_MILES = UnitOfLength.MILES
+
 
 def life360_central_coordinator(
     hass: HomeAssistant,
