@@ -8,17 +8,15 @@ from datetime import datetime
 from enum import IntEnum
 from itertools import groupby
 from typing import Any, NewType, cast
-
+from homeassistant.const import Platform
 from life360 import Life360, Life360Error, LoginError  # type: ignore[attr-defined]
 
 from homeassistant.config_entries import ConfigEntries, ConfigEntry, ConfigEntryState
-from homeassistant.const import (
-    LENGTH_FEET,
-    LENGTH_KILOMETERS,
-    LENGTH_METERS,
-    LENGTH_MILES,
-    Platform,
-)
+from homeassistant.const import UnitOfLength
+LENGTH_FEET = UnitOfLength.FEET
+LENGTH_KILOMETERS = UnitOfLength.KILOMETERS
+LENGTH_METERS = UnitOfLength.METERS
+LENGTH_MILES = UnitOfLength.MILES
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import entity_registry
