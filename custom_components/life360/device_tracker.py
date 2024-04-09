@@ -148,9 +148,10 @@ class Life360DeviceTracker(
         """Run when the entity registry entry has been updated."""
         self._registry_entry_updated = True
 
-    async def _async_registry_updated(self, event: Event) -> None:
+    @callback
+    def _async_registry_updated(self, event: Event) -> None:
         """Handle entity registry update."""
-        await super()._async_registry_updated(event)
+        super()._async_registry_updated(event)
         if self._registry_entry_updated:
             self._registry_entry_updated = False
             if "config_entry_id" in event.data["changes"]:
@@ -161,7 +162,7 @@ class Life360DeviceTracker(
                 # However, config entry is still loaded and associated with the
                 # coordinator that was used to create this entity. Therefore, the
                 # entity needs to be removed here.
-                await self.async_remove()
+                self.hass.async_create_task(self.async_remove())
 
     def _process_update(self) -> None:
         """Process new Member data."""

@@ -441,7 +441,7 @@ class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
         async with self._refresh_lock:
             await super().async_refresh()
 
-    async def _handle_refresh_interval(self, _now: datetime) -> None:
+    async def _handle_refresh_interval(self, _now: datetime | None = None) -> None:
         """Handle a refresh interval occurrence."""
         async with self._refresh_lock:
             await super()._handle_refresh_interval(_now)
