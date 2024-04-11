@@ -58,11 +58,9 @@ async def test_migration(
     au_f = lambda i: f"authorization_{i}"
 
     cfg_accts: dict[str, dict[str, Any]] = {}
-    str_accts: dict[str, dict[str, Any]] = {}
     comb_ds: float | None = None
     comb_ma: int | None = None
     comb_dr: bool = False
-    # v1_entries: list[ConfigEntry] = []
     v1_entry_ids: list[str] = []
     entity_ids: list[str] = []
     for i, o in enumerate(option_set):
@@ -71,8 +69,7 @@ async def test_migration(
         au = au_f(i)
         ds, ma, dr = o
 
-        cfg_accts[un] = {"password": pw, "enabled": True}
-        str_accts[un] = {"authorization": au, "circles": []}
+        cfg_accts[un] = {"password": pw, "authorization": au, "enabled": True}
         if ds is not None:
             if comb_ds is None:
                 comb_ds = ds
@@ -92,7 +89,6 @@ async def test_migration(
             options={"driving_speed": ds, "max_gps_accuracy": ma, "driving": dr},
         )
         v1_entry.add_to_hass(hass)
-        # v1_entries.append(v1_entry)
         v1_entry_ids.append(v1_entry.entry_id)
 
         name = f"life360 online ({un})"
@@ -139,12 +135,6 @@ async def test_migration(
         "max_gps_accuracy": comb_ma,
         "driving": comb_dr,
     }
-
-    # Check that .storage data has been written with expected values.
-    assert DOMAIN in hass_storage
-    data = hass_storage[DOMAIN]["data"]
-    assert "accounts" in data
-    assert data["accounts"] == str_accts
 
     # Check that entities have been reassigned to v2 config entry.
     for entity_id in entity_ids:

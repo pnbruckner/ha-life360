@@ -2,29 +2,19 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from functools import partial
 import logging
-from math import ceil
 from typing import Any, cast
 
 from homeassistant.config_entries import SOURCE_USER, ConfigEntry, ConfigEntryDisabler
-from homeassistant.const import CONF_ENABLED, CONF_PASSWORD, CONF_USERNAME, Platform
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv, entity_registry as er
-from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
-from .const import (
-    CONF_ACCOUNTS,
-    CONF_AUTHORIZATION,
-    CONF_CIRCLES,
-    CONF_DRIVING_SPEED,
-    CONF_MAX_GPS_ACCURACY,
-    CONF_SHOW_DRIVING,
-    DOMAIN,
-    STORAGE_KEY,
-    STORAGE_VERSION,
-)
+from .const import DOMAIN
+from .helpers import ConfigOptions
 
 # Needed only if setup or async_setup exists.
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -52,12 +42,8 @@ async def _migrate_config_entries(
     ent_reg = er.async_get(hass)
 
     # Get data from existing version 1 config entries.
-    cfg_accts: dict[str, dict[str, Any]] = {}
-    str_accts: dict[str, dict[str, Any]] = {}
+    options = ConfigOptions()
     entities: list[er.RegistryEntry] = []
-    show_driving = False
-    driving_speed: float | None = None
-    max_gps_accuracy: int | None = None
 
     for entry in entries:
         # Make sure entry is disabled so it won't get set up before we get a chance to
@@ -67,48 +53,11 @@ async def _migrate_config_entries(
                 entry.entry_id, ConfigEntryDisabler.USER
             )
 
-        username = cast(str, entry.data[CONF_USERNAME])
-
-        # Split config entry data. Password goes into new config entry's options, and
-        # authorization goes into (new) .storage file.
-        cfg_accts[username] = {
-            CONF_PASSWORD: cast(str, entry.data[CONF_PASSWORD]),
-            CONF_ENABLED: was_enabled,
-        }
-        str_accts[username] = {
-            CONF_AUTHORIZATION: cast(str, entry.data[CONF_AUTHORIZATION]),
-            CONF_CIRCLES: [],
-        }
+        # Convert data & options to options for new config entry.
+        options.merge_v1_config_entry(entry, was_enabled)
 
         # Gather entities so they can be reassigned to new config entry.
         entities.extend(er.async_entries_for_config_entry(ent_reg, entry.entry_id))
-
-        # Combine remaining options since we'll only have one set now.
-        if cast(bool, entry.options[CONF_SHOW_DRIVING]):
-            show_driving = True
-        if (
-            entry_driving_speed := cast(float | None, entry.options[CONF_DRIVING_SPEED])
-        ) is not None:
-            if driving_speed is None:
-                driving_speed = entry_driving_speed
-            else:
-                driving_speed = min(driving_speed, entry_driving_speed)
-        if (
-            entry_max_gps_accuracy := cast(
-                float | None, entry.options[CONF_MAX_GPS_ACCURACY]
-            )
-        ) is not None:
-            entry_mga_int = ceil(entry_max_gps_accuracy)
-            if max_gps_accuracy is None:
-                max_gps_accuracy = entry_mga_int
-            else:
-                max_gps_accuracy = max(max_gps_accuracy, entry_mga_int)
-
-    # Create .storage file. Make it private since it contains authorization string.
-    store = Store[dict[str, dict[str, dict[str, Any]]]](
-        hass, STORAGE_VERSION, STORAGE_KEY, private=True
-    )
-    await store.async_save({CONF_ACCOUNTS: str_accts})
 
     # Create new config entry.
     # minor_version is new in 2024.1.
@@ -119,12 +68,7 @@ async def _migrate_config_entries(
         title="Life360",
         data={},
         source=SOURCE_USER,
-        options={
-            CONF_ACCOUNTS: cfg_accts,
-            CONF_SHOW_DRIVING: show_driving,
-            CONF_MAX_GPS_ACCURACY: max_gps_accuracy,
-            CONF_DRIVING_SPEED: driving_speed,
-        },
+        options=asdict(options),
     )
     try:
         v2_entry = create_config_entry(minor_version=1)

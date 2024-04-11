@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from abc import abstractmethod
+from abc import ABC, abstractmethod
+from dataclasses import asdict
 from functools import cached_property
 import logging
 from typing import Any, cast
@@ -15,7 +16,7 @@ from homeassistant.config_entries import (
     ConfigFlow,
     OptionsFlowWithConfigEntry,
 )
-from homeassistant.const import CONF_ENABLED, CONF_PASSWORD, CONF_USERNAME
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowHandler, FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -28,6 +29,7 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import COMM_MAX_RETRIES, CONF_ACCOUNTS, DOMAIN
+from .helpers import Account, ConfigOptions
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,23 +37,22 @@ LIMIT_GPS_ACC = "limit_gps_acc"
 SET_DRIVE_SPEED = "set_drive_speed"
 
 
-class Life360Flow(FlowHandler):
+class Life360Flow(FlowHandler, ABC):
     """Life360 flow mixin."""
 
     _acct: str | None
     _username: str | None
     _password: str
-    _authorization: dict[str, str] = {}
-
-    @property
-    @abstractmethod
-    def options(self) -> dict[str, Any]:
-        """Return mutable copy of options."""
 
     @cached_property
-    def _accts(self) -> dict[str, dict[str, Any]]:
+    @abstractmethod
+    def opts(self) -> ConfigOptions:
+        """Return mutable options class."""
+
+    @cached_property
+    def _accts(self) -> dict[str, Account]:
         """Return current account info."""
-        return cast(dict[str, dict[str, Any]], self.options[CONF_ACCOUNTS])
+        return self.opts.accounts
 
     @property
     def _usernames(self) -> list[str]:
@@ -80,7 +81,7 @@ class Life360Flow(FlowHandler):
         """Select an account to modify."""
         if user_input is not None:
             self._acct = self._username = cast(str, user_input[CONF_ACCOUNTS])
-            self._password = self._accts[self._acct][CONF_PASSWORD]
+            self._password = self._accts[self._acct].password
             return await self.async_step_acct()
 
         return self.async_show_form(
@@ -170,16 +171,14 @@ class Life360Flow(FlowHandler):
         # Check that credentials work.
         api = Life360(async_get_clientsession(self.hass), COMM_MAX_RETRIES, verbosity=4)
         await api.login_by_username(self._username, self._password)
-        self._authorization[self._username] = api.authorization
 
         if self._acct:
-            enabled = cast(bool, self._accts.pop(self._acct)[CONF_ENABLED])
+            enabled = self._accts.pop(self._acct).enabled
         else:
             enabled = True
-        self._accts[self._username] = {
-            CONF_PASSWORD: self._password,
-            CONF_ENABLED: enabled,
-        }
+        self._accts[self._username] = Account(
+            self._password, api.authorization, enabled
+        )
 
     @abstractmethod
     async def async_step_done(self, _: dict[str, Any] | None = None) -> FlowResult:
@@ -191,14 +190,10 @@ class Life360ConfigFlow(ConfigFlow, Life360Flow, domain=DOMAIN):
 
     VERSION = 2
 
-    def __init__(self) -> None:
-        """Initialize config flow."""
-        self._options: dict[str, Any] = {CONF_ACCOUNTS: {}}
-
-    @property
-    def options(self) -> dict[str, Any]:
-        """Return mutable copy of options."""
-        return self._options
+    @cached_property
+    def opts(self) -> ConfigOptions:
+        """Return mutable options class."""
+        return ConfigOptions()
 
     @staticmethod
     @callback
@@ -217,12 +212,19 @@ class Life360ConfigFlow(ConfigFlow, Life360Flow, domain=DOMAIN):
 
     async def async_step_done(self, _: dict[str, Any] | None = None) -> FlowResult:
         """Finish the flow."""
-        return self.async_create_entry(title="Life360", data={}, options=self.options)
+        return self.async_create_entry(
+            title="Life360", data={}, options=asdict(self.opts)
+        )
 
 
 class Life360OptionsFlow(OptionsFlowWithConfigEntry, Life360Flow):
     """Life360 integration options flow."""
 
+    @cached_property
+    def opts(self) -> ConfigOptions:
+        """Return mutable options class."""
+        return ConfigOptions.from_dict(self.options)
+
     async def async_step_done(self, _: dict[str, Any] | None = None) -> FlowResult:
         """Finish the flow."""
-        return self.async_create_entry(title="", data=self.options)
+        return self.async_create_entry(title="", data=asdict(self.opts))
