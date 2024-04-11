@@ -13,6 +13,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
@@ -115,7 +116,7 @@ async def test_migration(
                 uuid_util.random_uuid_hex(),
                 suggested_object_id=name,
                 config_entry=v1_entry,
-                entity_category=er.EntityCategory.DIAGNOSTIC,
+                entity_category=EntityCategory.DIAGNOSTIC,
                 original_name=name,
             ).entity_id
         )

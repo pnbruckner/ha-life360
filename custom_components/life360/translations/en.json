@@ -3,41 +3,83 @@
         "abort": {
             "already_configured": "Account is already configured",
             "invalid_auth": "Invalid authentication",
-            "reauth_successful": "Re-authentication was successful"
+            "reauth_successful": "Re-authentication was successful",
+            "single_instance_allowed": "Life360 supports only one configuration. Adding additional ones is not needed."
         },
         "error": {
             "already_configured": "Account is already configured",
             "cannot_connect": "Failed to connect",
             "invalid_auth": "Invalid authentication",
+            "invalid_email": "Invalid email",
             "unknown": "Unexpected error"
         },
         "step": {
-            "reauth_confirm": {
-                "data": {
-                    "password": "Password"
-                },
-                "title": "Reauthenticate Integration"
+            "init": {
+                "title": "Accounts",
+                "description": "Current accounts:\n{accts}",
+                "menu_options": {
+                    "add_acct": "Add account",
+                    "mod_acct_sel": "Modify account",
+                    "del_accts": "Delete accounts",
+                    "max_gps_acc": "Done with accounts"
+                }
             },
-            "user": {
+            "acct": {
+                "title": "{action} account",
+                "description": "Currently only email & password are supported",
                 "data": {
-                    "password": "Password",
-                    "username": "Username"
-                },
-                "title": "Configure Life360 Account"
+                    "username": "Email address",
+                    "password": "Password"
+                }
+            },
+            "mod_acct_sel": {
+                "title": "Modify account",
+                "data": {
+                    "accounts": "Select account to modify"
+                }
+            },
+            "del_accts": {
+                "title": "Delete accounts",
+                "data": {
+                    "accounts": "Select accounts to delete"
+                }
             }
         }
     },
     "options": {
+        "error": {
+            "invalid_email": "Invalid email"
+        },
         "step": {
             "init": {
+                "title": "Accounts",
+                "description": "Current accounts:\n{accts}",
+                "menu_options": {
+                    "add_acct": "Add account",
+                    "mod_acct_sel": "Modify account",
+                    "del_accts": "Delete accounts",
+                    "max_gps_acc": "Done with accounts"
+                }
+            },
+            "acct": {
+                "title": "{action} account",
+                "description": "Currently only email & password are supported",
                 "data": {
-                    "driving": "Show driving as state",
-                    "driving_speed": "Driving speed",
-                    "limit_gps_acc": "Limit GPS accuracy",
-                    "max_gps_accuracy": "Max GPS accuracy (meters)",
-                    "set_drive_speed": "Set driving speed threshold"
-                },
-                "title": "Account Options"
+                    "username": "Email address",
+                    "password": "Password"
+                }
+            },
+            "mod_acct_sel": {
+                "title": "Modify account",
+                "data": {
+                    "accounts": "Select account to modify"
+                }
+            },
+            "del_accts": {
+                "title": "Delete accounts",
+                "data": {
+                    "accounts": "Select accounts to delete"
+                }
             }
         }
     }

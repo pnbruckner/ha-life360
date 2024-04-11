@@ -37,7 +37,7 @@ def _migrate_entity(
     ent_reg: er.EntityRegistry, entity: er.RegistryEntry, config_entry_id: str
 ) -> None:
     """Migrate an entity registry entry to new config entry."""
-    kwargs = {"config_entry_id": config_entry_id}
+    kwargs: dict[str, Any] = {"config_entry_id": config_entry_id}
     # Entity may have been disabled indirectly when old V1 config entries were disabled
     # below prior to completing migration in separate task. If so, re-enable them.
     if entity.disabled_by is er.RegistryEntryDisabler.CONFIG_ENTRY:
@@ -134,7 +134,6 @@ async def _migrate_config_entries(
     async def finish_migration(v2_entry: ConfigEntry) -> None:
         """Finish migration."""
         # Add new v2 config entry.
-        _LOGGER.debug("Adding: %s", v2_entry.entry_id)
         await hass.config_entries.async_add(v2_entry)
 
         # Migrate entity registry entries to new config entry.
@@ -201,6 +200,9 @@ async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
                         continue
                     await hass.config_entries.async_remove(entry.entry_id)
             else:
+                _LOGGER.warning(
+                    "Migrating Life360 integration entries from version 1 to 2"
+                )
                 await _migrate_config_entries(hass, entries)
 
     return True
@@ -209,6 +211,8 @@ async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up config entry."""
     # TODO: Create update_coordinator, ...???
+    # TODO: Monitor config entry updates and adjust .storage, etc. according to account
+    #       changes.
 
     # Set up components for our platforms.
     # await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
