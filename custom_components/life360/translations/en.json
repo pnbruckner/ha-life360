@@ -1,13 +1,10 @@
 {
     "config": {
         "abort": {
-            "already_configured": "Account is already configured",
-            "invalid_auth": "Invalid authentication",
             "reauth_successful": "Re-authentication was successful",
             "single_instance_allowed": "Life360 supports only one configuration. Adding additional ones is not needed."
         },
         "error": {
-            "already_configured": "Account is already configured",
             "cannot_connect": "Failed to connect",
             "invalid_auth": "Invalid authentication",
             "invalid_email": "Invalid email",
@@ -48,7 +45,10 @@
     },
     "options": {
         "error": {
-            "invalid_email": "Invalid email"
+            "cannot_connect": "Failed to connect",
+            "invalid_auth": "Invalid authentication",
+            "invalid_email": "Invalid email",
+            "unknown": "Unexpected error"
         },
         "step": {
             "init": {

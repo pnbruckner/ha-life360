@@ -7,6 +7,7 @@ from functools import cached_property
 import logging
 from typing import Any, cast
 
+from life360 import CommError, Life360, Life360Error, LoginError
 import voluptuous as vol
 
 from homeassistant.config_entries import (
@@ -17,6 +18,7 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_ENABLED, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowHandler, FlowResult
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
@@ -25,7 +27,7 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
-from .const import CONF_ACCOUNTS, DOMAIN
+from .const import COMM_MAX_RETRIES, CONF_ACCOUNTS, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,6 +41,7 @@ class Life360Flow(FlowHandler):
     _acct: str | None
     _username: str | None
     _password: str
+    _authorization: dict[str, str] = {}
 
     @property
     @abstractmethod
@@ -99,6 +102,12 @@ class Life360Flow(FlowHandler):
                 await self._verify_and_save_acct()
             except vol.EmailInvalid:
                 errors[CONF_USERNAME] = "invalid_email"
+            except LoginError:
+                errors["base"] = "invalid_auth"
+            except CommError:
+                errors["base"] = "cannot_connect"
+            except Life360Error:
+                errors["base"] = "unknown"
             else:
                 return await self.async_step_init()
 
@@ -156,9 +165,13 @@ class Life360Flow(FlowHandler):
 
     async def _verify_and_save_acct(self) -> None:
         """Verify and save account to options."""
-        # TODO: Actually check if login works!
-
         self._username = cast(str, vol.Email()(self._username))
+
+        # Check that credentials work.
+        api = Life360(async_get_clientsession(self.hass), COMM_MAX_RETRIES, verbosity=4)
+        await api.login_by_username(self._username, self._password)
+        self._authorization[self._username] = api.authorization
+
         if self._acct:
             enabled = cast(bool, self._accts.pop(self._acct)[CONF_ENABLED])
         else:
