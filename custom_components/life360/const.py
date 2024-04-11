@@ -15,6 +15,9 @@ SPEED_FACTOR_MPH = 2.25
 SPEED_DIGITS = 1
 UPDATE_INTERVAL = timedelta(seconds=10)
 
+STORAGE_KEY = DOMAIN
+STORAGE_VERSION = 1
+
 ATTR_ADDRESS = "address"
 ATTR_AT_LOC_SINCE = "at_loc_since"
 ATTR_DRIVING = "driving"
@@ -27,6 +30,7 @@ ATTR_IGNORED_UPDATE_REASONS = "ignored_update_reasons"
 
 STATE_DRIVING = "Driving"
 
+CONF_ACCOUNTS = "accounts"
 CONF_AUTHORIZATION = "authorization"
 CONF_CIRCLES = "circles"
 CONF_DRIVING_SPEED = "driving_speed"
@@ -35,15 +39,15 @@ CONF_MAX_GPS_ACCURACY = "max_gps_accuracy"
 CONF_MAX_UPDATE_WAIT = "max_update_wait"
 CONF_MEMBERS = "members"
 CONF_SHOW_AS_STATE = "show_as_state"
+CONF_SHOW_DRIVING = "driving"
 CONF_WARNING_THRESHOLD = "warning_threshold"
 
-SHOW_DRIVING = "driving"
 SHOW_MOVING = "moving"
 
 DEFAULT_OPTIONS = {
     CONF_DRIVING_SPEED: None,
     CONF_MAX_GPS_ACCURACY: None,
-    SHOW_DRIVING: False,
+    CONF_SHOW_DRIVING: False,
 }
 OPTIONS = list(DEFAULT_OPTIONS.keys())
 

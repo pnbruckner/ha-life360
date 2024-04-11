@@ -1,2 +1,3 @@
 # HA 2024.4.2
 pytest-homeassistant-custom-component==0.13.113
+life360==7.0.0b0
