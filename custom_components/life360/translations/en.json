@@ -12,13 +12,22 @@
         },
         "step": {
             "init": {
+                "title": "Basic Options",
+                "data": {
+                    "max_gps_accuracy": "Max GPS accuracy",
+                    "driving_speed": "Driving speed threshold",
+                    "driving": "Show driving as state",
+                    "verbosity": "DEBUG message verbosity"
+                }
+            },
+            "acct_menu": {
                 "title": "Accounts",
                 "description": "Current accounts:\n{accts}",
                 "menu_options": {
                     "add_acct": "Add account",
                     "mod_acct_sel": "Modify account",
                     "del_accts": "Delete accounts",
-                    "max_gps_acc": "Done with accounts"
+                    "done": "Done with accounts"
                 }
             },
             "acct": {
@@ -26,7 +35,8 @@
                 "description": "Currently only email & password are supported",
                 "data": {
                     "username": "Email address",
-                    "password": "Password"
+                    "password": "Password",
+                    "enabled": "Enabled"
                 }
             },
             "mod_acct_sel": {
@@ -52,13 +62,22 @@
         },
         "step": {
             "init": {
+                "title": "Basic Options",
+                "data": {
+                    "max_gps_accuracy": "Max GPS accuracy",
+                    "driving_speed": "Driving speed threshold",
+                    "driving": "Show driving as state",
+                    "verbosity": "DEBUG message verbosity"
+                }
+            },
+            "acct_menu": {
                 "title": "Accounts",
                 "description": "Current accounts:\n{accts}",
                 "menu_options": {
                     "add_acct": "Add account",
                     "mod_acct_sel": "Modify account",
                     "del_accts": "Delete accounts",
-                    "max_gps_acc": "Done with accounts"
+                    "done": "Done with accounts"
                 }
             },
             "acct": {
@@ -66,7 +85,8 @@
                 "description": "Currently only email & password are supported",
                 "data": {
                     "username": "Email address",
-                    "password": "Password"
+                    "password": "Password",
+                    "enabled": "Enabled"
                 }
             },
             "mod_acct_sel": {
@@ -80,6 +100,17 @@
                 "data": {
                     "accounts": "Select accounts to delete"
                 }
+            }
+        }
+    },
+    "selector": {
+        "verbosity": {
+            "options": {
+                "0": "Redacted request errors",
+                "1": "Above plus redacted response headers",
+                "2": "Above plus redacted response data",
+                "3": "Above but only sensitive data redactions",
+                "4": "Above but no redactions"
             }
         }
     }

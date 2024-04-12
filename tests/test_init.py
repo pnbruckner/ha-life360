@@ -13,32 +13,51 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
-from homeassistant.const import EntityCategory
+from homeassistant.const import EntityCategory, UnitOfSpeed
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 from homeassistant.util import uuid as uuid_util
+from homeassistant.util.unit_conversion import SpeedConverter
 
 
 # fmt: off
 @pytest.mark.parametrize(
-    "option_set",
+    ("metric", "option_set"),
     [
         (
-            # driving_speed, max_gps_accuracy, driving
-            (None, None, False),
+            False,
+            (
+                # driving_speed, max_gps_accuracy, driving
+                (None, None, False),
+            ),
         ),
         (
-            (10.0, 50.0, True),
+            False,
+            (
+                (10.0, 50.0, True),
+            ),
         ),
         (
-            (None, None, False),
-            (10.0, 50.0, False),
+            True,
+            (
+                (10.0, 50.0, True),
+            ),
         ),
         (
-            (None, None, False),
-            (10.0, 50.0, True),
-            (15.0, 100.0, False),
+            False,
+            (
+                (None, None, False),
+                (10.0, 50.0, False),
+            ),
+        ),
+        (
+            False,
+            (
+                (None, None, False),
+                (10.0, 50.0, True),
+                (15.0, 100.0, False),
+            ),
         ),
     ],
 )
@@ -47,9 +66,14 @@ async def test_migration(
     hass: HomeAssistant,
     hass_storage: dict[str, Any],
     entity_registry: er.EntityRegistry,
+    metric: bool,
     option_set: Iterable[tuple[float, float, bool]],
 ) -> None:
     """Test config entry migration."""
+
+    if not metric:
+        await hass.config.async_update(unit_system="us_customary")
+        await hass.async_block_till_done()
 
     # Mock v1 config entries w/ associated entities.
 
@@ -129,11 +153,18 @@ async def test_migration(
     assert v2_entry.entry_id not in v1_entry_ids
 
     # Check v2 config entry options.
+    if comb_ds is not None and metric:
+        comb_ds = SpeedConverter.convert(
+            comb_ds,
+            UnitOfSpeed.KILOMETERS_PER_HOUR,
+            UnitOfSpeed.MILES_PER_HOUR,
+        )
     assert v2_entry.options == {
         "accounts": cfg_accts,
         "driving_speed": comb_ds,
         "max_gps_accuracy": comb_ma,
         "driving": comb_dr,
+        "verbosity": 0,
     }
 
     # Check that entities have been reassigned to v2 config entry.

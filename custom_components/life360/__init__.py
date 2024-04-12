@@ -12,6 +12,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv, entity_registry as er
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.util.unit_system import METRIC_SYSTEM
 
 from .const import DOMAIN
 from .helpers import ConfigOptions
@@ -54,7 +55,9 @@ async def _migrate_config_entries(
             )
 
         # Convert data & options to options for new config entry.
-        options.merge_v1_config_entry(entry, was_enabled)
+        options.merge_v1_config_entry(
+            entry, was_enabled, hass.config.units is METRIC_SYSTEM
+        )
 
         # Gather entities so they can be reassigned to new config entry.
         entities.extend(er.async_entries_for_config_entry(ent_reg, entry.entry_id))

@@ -40,6 +40,7 @@ CONF_MAX_UPDATE_WAIT = "max_update_wait"
 CONF_MEMBERS = "members"
 CONF_SHOW_AS_STATE = "show_as_state"
 CONF_SHOW_DRIVING = "driving"
+CONF_VERBOSITY = "verbosity"
 CONF_WARNING_THRESHOLD = "warning_threshold"
 
 SHOW_MOVING = "moving"
