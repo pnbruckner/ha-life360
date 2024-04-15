@@ -8,7 +8,7 @@ from functools import cached_property
 import logging
 from typing import Any, cast
 
-from life360 import CommError, Life360, Life360Error, LoginError
+from life360 import CommError, Life360Error, LoginError
 import voluptuous as vol
 
 from homeassistant.config_entries import (
@@ -39,6 +39,7 @@ from homeassistant.helpers.selector import (
 )
 from homeassistant.util.unit_system import METRIC_SYSTEM
 
+from . import helpers
 from .const import (
     COMM_MAX_RETRIES,
     COMM_TIMEOUT,
@@ -285,7 +286,9 @@ class Life360Flow(FlowHandler, ABC):
         if self._enabled:
             session = async_create_clientsession(self.hass, timeout=COMM_TIMEOUT)
             try:
-                api = Life360(session, COMM_MAX_RETRIES, verbosity=self._opts.verbosity)
+                api = helpers.Life360(
+                    session, COMM_MAX_RETRIES, verbosity=self._opts.verbosity
+                )
                 await api.login_by_username(self._username, self._password)
                 authorization = api.authorization
             finally:

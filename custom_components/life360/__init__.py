@@ -15,6 +15,7 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.util.unit_system import METRIC_SYSTEM
 
 from .const import DOMAIN
+from .coordinator import Life360DataUpdateCoordinator
 from .helpers import ConfigOptions
 
 # Needed only if setup or async_setup exists.
@@ -157,6 +158,9 @@ async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up config entry."""
+    coordinator = Life360DataUpdateCoordinator(hass)
+    await coordinator.async_config_entry_first_refresh()
+
     # TODO: Create update_coordinator, ...???
     # TODO: Monitor config entry updates and adjust .storage, etc. according to account
     #       changes.
