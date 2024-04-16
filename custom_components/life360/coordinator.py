@@ -3,23 +3,27 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine, Iterable
+from collections.abc import Callable, Coroutine, Iterable
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from enum import Enum, auto
+from functools import partial
 import logging
 from math import ceil
-from typing import Any, Self, TypeVar, cast
+from typing import Any, Self, TypeVar, TypeVarTuple, cast
 
 from life360 import Life360Error, LoginError, NotModified, RateLimited
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from . import helpers
 from .const import (
+    CIRCLE_UPDATE_INTERVAL,
     COMM_MAX_RETRIES,
     COMM_TIMEOUT,
     DOMAIN,
@@ -31,7 +35,9 @@ from .helpers import ConfigOptions, MemberData
 
 _LOGGER = logging.getLogger(__name__)
 
+_T = TypeVar("_T")
 _R = TypeVar("_R")
+_Ts = TypeVarTuple("_Ts")
 _StoredData = dict[str, dict[str, dict[str, Any]]]
 
 
@@ -70,10 +76,11 @@ class RateLimitedAction(Enum):
     RETRY = auto()
 
 
-class RequestResult(Enum):
-    """Request result type."""
+class RequestError(Enum):
+    """Request error type."""
 
     NOT_MODIFIED = auto()
+    RATE_LIMITED = auto()
     NO_DATA = auto()
 
 
@@ -81,8 +88,8 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[dict[str, MemberData]])
     """Life360 data update coordinator."""
 
     config_entry: ConfigEntry
-    __cm_data: CircleMemberData
-    _get_cm_data_task: asyncio.Task | None = None
+    __cm_data: CircleMemberData | None = None
+    _updating_cm_data: bool = False
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize data update coordinator."""
@@ -116,9 +123,9 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[dict[str, MemberData]])
             cids = cm_data.mem_circles[mid]
             member_circle_data: dict[str, MemberData] = {}
             for cid, raw_member in zip(cids, raw_member_list):
-                if raw_member is RequestResult.NOT_MODIFIED:
+                if raw_member is RequestError.NOT_MODIFIED:
                     member_circle_data[cid] = self._member_circle_data[mid][cid]
-                elif not isinstance(raw_member, RequestResult):
+                elif not isinstance(raw_member, RequestError):
                     member_circle_data[cid] = MemberData.from_server(raw_member)
             self._member_circle_data[mid] = member_circle_data
             result[mid] = sorted(member_circle_data.values())[-1]
@@ -127,117 +134,135 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[dict[str, MemberData]])
 
     async def _cm_data(self) -> CircleMemberData:
         """Return current Circle & Member data."""
-        if not self._get_cm_data_task:
-            flag = asyncio.Event()
-            self._get_cm_data_task = self.config_entry.async_create_background_task(
+        if not self.__cm_data:
+            # Try to get Circles & Members from storage.
+            self.__cm_data = await self._load_cm_data()
+            run_now = False
+            if not self.__cm_data:
+                # Get Circles & Members from server, returning immediately with whatever
+                # data is available.
+                self.__cm_data, run_now = await self._get_cm_data(at_startup=True)
+
+            # eager_start was added in 2024.3.
+            start_updating = partial(
+                self.config_entry.async_create_background_task,
                 self.hass,
-                self._get_cm_data(flag),
-                "Get Life360 Circles & Members",
+                self._start_cm_data_updating(run_now=run_now),
+                "Start periodic Circle & Member updating",
             )
-            await flag.wait()
+            try:
+                start_updating(eager_start=True)
+            except TypeError:
+                start_updating()
+
         return self.__cm_data
 
-    async def _get_cm_data(self, flag: asyncio.Event) -> None:
-        """Periodically get Life360 Circles & Members seen from all enabled accounts.
+    async def _load_cm_data(self) -> CircleMemberData | None:
+        """Load Circles & Members from storage."""
+        if not (store_data := await self._load_store()):
+            _LOGGER.warning(
+                "Could not load Circles & Members from storage"
+                "; will use whatever data is immediately available from server"
+            )
+            return None
 
-        Set flag when Circles & Members is first available and when they are updated.
-        """
-        cm_data: CircleMemberData | None = None
-        circles: dict[str, CircleData]
+        circles: dict[str, CircleData] = {}
+        mem_circles: dict[str, list[str]] = {}
+        for cid, circle_data_dict in store_data["circles"].items():
+            circle_data = CircleData.from_dict(circle_data_dict)
+            circles[cid] = circle_data
+            for mid in circle_data.mids:
+                mem_circles.setdefault(mid, []).append(cid)
+        return CircleMemberData(circles, mem_circles)
 
-        # Try to get Circles & Members from storage.
+    async def _load_store(self) -> _StoredData | None:
+        """Load data from storage."""
         try:
-            store_data = await self._store.async_load()
+            return await self._store.async_load()
         except Exception:
             # TODO: How to handle this properly?
             _LOGGER.exception("While loading Circles & Members from storage")
+            return None
+
+    async def _get_cm_data(self, at_startup: bool) -> tuple[CircleMemberData, bool]:
+        """Get Life360 Circles & Members seen from all enabled accounts.
+
+        Returns CircleMemberData and a bool that is True if any requests were rate
+        limited.
+        """
+        if self.__cm_data:
+            old_circles = self.__cm_data.circles
         else:
-            if store_data:
-                circles = {
-                    cid: CircleData.from_dict(circle_data_dict)
-                    for cid, circle_data_dict in store_data["circles"].items()
-                }
+            old_circles = {}
+        unames = list(self._apis)
 
-                cm_data = CircleMemberData(circles)
+        raw_circles_list = await self._get_circles(unames, at_startup)
 
-                for cid, circle_data in circles.items():
-                    for mid in circle_data.mids:
-                        cm_data.mem_circles.setdefault(mid, []).append(cid)
+        circles: dict[str, CircleData] = {}
+        rate_limited = False
+        for uname, raw_circles in zip(unames, raw_circles_list):
+            if raw_circles is RequestError.NOT_MODIFIED:
+                for cid, circle_data in old_circles.items():
+                    if uname not in circle_data.unames:
+                        continue
+                    if cid not in circles:
+                        circles[cid] = CircleData(circle_data.name)
+                    circles[cid].unames.append(uname)
+            elif isinstance(raw_circles, RequestError):
+                if raw_circles is RequestError.RATE_LIMITED:
+                    rate_limited = True
             else:
-                _LOGGER.warning(
-                    "Could not load Circles & Members from storage"
-                    "; will use whatever data is immediately available from server"
-                )
-
-        # If could not load Cirles & Members from storage, try to get them from server.
-        # But for this first try, don't retry rate limited requests. Just log them as
-        # warnings and use whatever data is available immediately.
-        if cm_data is None:
-            circles = {}
-            unames = list(self._apis)
-            raw_circles_list = await self._get_circles(
-                unames,
-                rate_limited_action=RateLimitedAction.WARNING,
-                raise_not_modified=False,
-            )
-            for uname, raw_circles in zip(unames, raw_circles_list):
-                if isinstance(raw_circles, RequestResult):
-                    continue
                 for raw_circle in raw_circles:
                     if (cid := raw_circle["id"]) not in circles:
                         circles[cid] = CircleData(raw_circle["name"])
                     circles[cid].unames.append(uname)
 
-            cm_data = CircleMemberData(circles)
+        cm_data = CircleMemberData(circles)
 
-            for cid, circle_data in circles.items():
-                for uname in circle_data.unames:
-                    raw_members = await self._request(
-                        uname,
-                        self._apis[uname].get_circle_members(cid),
-                        f"while getting Members in {circle_data.name} Circle",
-                    )
-                    if not isinstance(raw_members, RequestResult):
-                        for raw_member in raw_members:
-                            # TODO: Add Member name, too???
-                            mid = cast(str, raw_member["id"])
-                            circle_data.mids.append(mid)
-                            cm_data.mem_circles.setdefault(mid, []).append(cid)
-                        break
+        for cid, circle_data in circles.items():
+            for uname in circle_data.unames:
+                raw_members = await self._request(
+                    uname,
+                    self._apis[uname].get_circle_members,
+                    cid,
+                    msg=f"while getting Members in {circle_data.name} Circle",
+                )
+                if not isinstance(raw_members, RequestError):
+                    for raw_member in raw_members:
+                        # TODO: Add Member name, too???
+                        mid = cast(str, raw_member["id"])
+                        circle_data.mids.append(mid)
+                        cm_data.mem_circles.setdefault(mid, []).append(cid)
+                    break
 
-            await self._store.async_save(
-                {
-                    "circles": {
-                        cid: asdict(circle_data)
-                        for cid, circle_data in cm_data.circles.items()
-                    }
-                }
-            )
+        if at_startup:
+            store_data = cast(_StoredData, {})
+        else:
+            store_data = await self._load_store() or {}
+        store_data["circles"] = {
+            cid: asdict(circle_data) for cid, circle_data in cm_data.circles.items()
+        }
+        await self._store.async_save(store_data)
 
-        self.__cm_data = cm_data
-        flag.set()
-
-        while True:
-            await asyncio.sleep(60 * 60)
+        return cm_data, rate_limited
 
     async def _get_circles(
-        self,
-        unames: Iterable[str],
-        rate_limited_action: RateLimitedAction = RateLimitedAction.RETRY,
-        raise_not_modified: bool = True,
-    ) -> list[list[dict[str, str]] | RequestResult]:
+        self, unames: Iterable[str], at_startup: bool
+    ) -> list[list[dict[str, str]] | RequestError]:
         """Get Circles for each username."""
+        rla = RateLimitedAction.WARNING if at_startup else RateLimitedAction.RETRY
         return await asyncio.gather(  # type: ignore[no-any-return]
             *(
                 self.config_entry.async_create_background_task(
                     self.hass,
                     self._request(
                         uname,
-                        self._apis[uname].get_circles(
-                            raise_not_modified=raise_not_modified
+                        partial(
+                            self._apis[uname].get_circles,
+                            raise_not_modified=not at_startup,
                         ),
-                        "while getting Circles",
-                        rate_limited_action=rate_limited_action,
+                        msg="while getting Circles",
+                        rate_limited_action=rla,
                     ),
                     f"Get Circles for {uname}",
                 )
@@ -245,11 +270,30 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[dict[str, MemberData]])
             )
         )
 
+    async def _start_cm_data_updating(self, run_now: bool) -> None:
+        """Start periodic updating of Circles & Members data."""
+        if run_now:
+            self.__cm_data, _ = await self._get_cm_data(at_startup=False)
+        self.config_entry.async_on_unload(
+            async_track_time_interval(
+                self.hass, self._update_cm_data, CIRCLE_UPDATE_INTERVAL
+            )
+        )
+
+    async def _update_cm_data(self, now: datetime) -> None:
+        """Update Circles & Members data."""
+        # Guard against being called again while previous call is still in progress.
+        if self._updating_cm_data:
+            return
+        self._updating_cm_data = True
+        self.__cm_data, _ = await self._get_cm_data(at_startup=False)
+        self._updating_cm_data = False
+
     async def _get_raw_member_list(
         self, mid: str, cm_data: CircleMemberData
-    ) -> list[dict[str, Any] | RequestResult]:
+    ) -> list[dict[str, Any] | RequestError]:
         """Get raw Member data from each Circle Member is in."""
-        tasks: list[asyncio.Task[dict[str, Any] | RequestResult]] = []
+        tasks: list[asyncio.Task[dict[str, Any] | RequestError]] = []
         for cid in cm_data.mem_circles[mid]:
             circle_data = cm_data.circles[cid]
             tasks.append(
@@ -263,41 +307,50 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[dict[str, MemberData]])
 
     async def _get_raw_member(
         self, mid: str, cid: str, circle_data: CircleData
-    ) -> dict[str, Any] | RequestResult:
+    ) -> dict[str, Any] | RequestError:
         """Get raw Member data from given Circle."""
         for uname in circle_data.unames:
             raw_member = await self._request(
                 uname,
-                self._apis[uname].get_circle_member(cid, mid, raise_not_modified=True),
-                f"while getting Member from {circle_data.name} Circle",
+                partial(
+                    self._apis[uname].get_circle_member,
+                    cid,
+                    mid,
+                    raise_not_modified=True,
+                ),
+                msg=f"while getting Member from {circle_data.name} Circle",
             )
-            if raw_member is RequestResult.NO_DATA:
-                continue
-            return raw_member
-        return RequestResult.NO_DATA
+            if raw_member is RequestError.NOT_MODIFIED:
+                return RequestError.NOT_MODIFIED
+            if not isinstance(raw_member, RequestError):
+                return raw_member  # type: ignore[no-any-return]
+        return RequestError.NO_DATA
 
+    # TODO: Add some overall timeout to make sure rate limiting & retrying can't make it take forever???
     async def _request(
         self,
         uname: str,
-        coro: Coroutine[Any, Any, _R],
-        msg: str,
+        target: Callable[[*_Ts], Coroutine[Any, Any, _R]],
+        *args: *_Ts,
+        msg: str | None = None,
         rate_limited_action: RateLimitedAction = RateLimitedAction.ERROR,
-    ) -> _R | RequestResult:
+    ) -> _R | RequestError:
         """Make a request to the Life360 server."""
         if uname in self._login_error:
-            return RequestResult.NO_DATA
+            return RequestError.NO_DATA
 
         while True:
             try:
-                return await coro
+                return await target(*args)
             except NotModified:
-                return RequestResult.NOT_MODIFIED
+                return RequestError.NOT_MODIFIED
             except LoginError as exc:
                 _LOGGER.error("%s: login error %s: %s", uname, msg, exc)
                 await self._handle_login_error(uname)
-                return RequestResult.NO_DATA
+                return RequestError.NO_DATA
             except Life360Error as exc:
                 level = logging.ERROR
+                result = RequestError.NO_DATA
                 if isinstance(exc, RateLimited):
                     if rate_limited_action is RateLimitedAction.RETRY:
                         delay = ceil(exc.retry_after or 0) + 10
@@ -311,10 +364,11 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[dict[str, MemberData]])
                         continue
                     if rate_limited_action is RateLimitedAction.WARNING:
                         level = logging.WARNING
+                    result = RequestError.RATE_LIMITED
                 # TODO: Keep track of errors per uname so we don't flood log???
                 #       Maybe like DataUpdateCoordinator does it?
                 _LOGGER.log(level, "%s: while getting Circles: %s", uname, exc)
-                return RequestResult.NO_DATA
+                return result
 
     async def _handle_login_error(self, uname: str) -> None:
         """Handle account login error."""

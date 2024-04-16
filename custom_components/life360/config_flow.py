@@ -186,7 +186,7 @@ class Life360Flow(FlowHandler, ABC):
     ) -> FlowResult:
         """Select an account to modify."""
         if len(self._usernames) == 1 or user_input is not None:
-            if len(self._usernames) == 1:
+            if user_input is None:
                 username = self._usernames[0]
             else:
                 username = cast(str, user_input[CONF_ACCOUNTS])
