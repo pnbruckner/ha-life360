@@ -87,12 +87,11 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[dict[str, MemberData]])
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize data update coordinator."""
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=UPDATE_INTERVAL)
-        session = async_create_clientsession(hass, timeout=COMM_TIMEOUT)
         options = ConfigOptions.from_dict(self.config_entry.options)
         self._store = Store[_StoredData](self.hass, STORAGE_VERSION, STORAGE_KEY)
         self._apis = {
             uname: helpers.Life360(
-                session,
+                async_create_clientsession(hass, timeout=COMM_TIMEOUT),
                 COMM_MAX_RETRIES,
                 acct.authorization,
                 verbosity=options.verbosity,
@@ -144,6 +143,7 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[dict[str, MemberData]])
         Set flag when Circles & Members is first available and when they are updated.
         """
         cm_data: CircleMemberData | None = None
+        circles: dict[str, CircleData]
 
         # Try to get Circles & Members from storage.
         try:
@@ -176,7 +176,9 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[dict[str, MemberData]])
             circles = {}
             unames = list(self._apis)
             raw_circles_list = await self._get_circles(
-                unames, rate_limited_action=RateLimitedAction.WARNING
+                unames,
+                rate_limited_action=RateLimitedAction.WARNING,
+                raise_not_modified=False,
             )
             for uname, raw_circles in zip(unames, raw_circles_list):
                 if isinstance(raw_circles, RequestResult):
@@ -219,7 +221,10 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[dict[str, MemberData]])
             await asyncio.sleep(60 * 60)
 
     async def _get_circles(
-        self, unames: Iterable[str], rate_limited_action: RateLimitedAction
+        self,
+        unames: Iterable[str],
+        rate_limited_action: RateLimitedAction = RateLimitedAction.RETRY,
+        raise_not_modified: bool = True,
     ) -> list[list[dict[str, str]] | RequestResult]:
         """Get Circles for each username."""
         return await asyncio.gather(  # type: ignore[no-any-return]
@@ -228,7 +233,9 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[dict[str, MemberData]])
                     self.hass,
                     self._request(
                         uname,
-                        self._apis[uname].get_circles(),
+                        self._apis[uname].get_circles(
+                            raise_not_modified=raise_not_modified
+                        ),
                         "while getting Circles",
                         rate_limited_action=rate_limited_action,
                     ),
@@ -261,7 +268,7 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[dict[str, MemberData]])
         for uname in circle_data.unames:
             raw_member = await self._request(
                 uname,
-                self._apis[uname].get_circle_member(cid, mid),
+                self._apis[uname].get_circle_member(cid, mid, raise_not_modified=True),
                 f"while getting Member from {circle_data.name} Circle",
             )
             if raw_member is RequestResult.NO_DATA:

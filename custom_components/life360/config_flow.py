@@ -289,8 +289,9 @@ class Life360Flow(FlowHandler, ABC):
                 api = helpers.Life360(
                     session, COMM_MAX_RETRIES, verbosity=self._opts.verbosity
                 )
-                await api.login_by_username(self._username, self._password)
-                authorization = api.authorization
+                authorization = await api.login_by_username(
+                    self._username, self._password
+                )
             finally:
                 session.detach()
         else:
