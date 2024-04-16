@@ -158,9 +158,10 @@ class Life360Flow(FlowHandler, ABC):
 
     async def async_step_acct_menu(self, _: dict[str, Any] | None = None) -> FlowResult:
         """Handle account options."""
-        menu_options = ["add_acct"]
-        if self._accts:
-            menu_options.extend(["mod_acct_sel", "del_accts", "done"])
+        if not self._accts:
+            return await self.async_step_add_acct()
+
+        menu_options = ["add_acct", "mod_acct_sel", "del_accts", "done"]
         return self.async_show_menu(
             step_id="acct_menu",
             menu_options=menu_options,
@@ -184,10 +185,14 @@ class Life360Flow(FlowHandler, ABC):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Select an account to modify."""
-        if user_input is not None:
-            self._acct = self._username = cast(str, user_input[CONF_ACCOUNTS])
-            self._password = self._accts[self._acct].password
-            self._enabled = self._accts[self._acct].enabled
+        if len(self._usernames) == 1 or user_input is not None:
+            if len(self._usernames) == 1:
+                username = self._usernames[0]
+            else:
+                username = cast(str, user_input[CONF_ACCOUNTS])
+            self._acct = self._username = username
+            self._password = self._accts[username].password
+            self._enabled = self._accts[username].enabled
             return await self.async_step_acct()
 
         return self.async_show_form(
