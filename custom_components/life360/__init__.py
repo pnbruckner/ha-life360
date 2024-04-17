@@ -16,13 +16,16 @@ from homeassistant.util.unit_system import METRIC_SYSTEM
 
 from .const import DOMAIN
 from .coordinator import Life360DataUpdateCoordinator
-from .helpers import ConfigOptions
+from .helpers import ConfigOptions, Life360Store
 
 # Needed only if setup or async_setup exists.
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 _LOGGER = logging.getLogger(__name__)
-_PLATFORMS = [Platform.BINARY_SENSOR, Platform.DEVICE_TRACKER]
+_PLATFORMS = [
+    # Platform.BINARY_SENSOR,
+    Platform.DEVICE_TRACKER,
+]
 
 
 def _migrate_entity(
@@ -158,20 +161,24 @@ async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up config entry."""
-    coordinator = Life360DataUpdateCoordinator(hass)
-    await coordinator.async_config_entry_first_refresh()
+    store = Life360Store(hass)
+    await store.load()
 
-    # TODO: Create update_coordinator, ...???
+    coordinator = Life360DataUpdateCoordinator(hass, store)
+    await coordinator.async_config_entry_first_refresh()
+    hass.data[DOMAIN] = coordinator
+
     # TODO: Monitor config entry updates and adjust .storage, etc. according to account
     #       changes.
 
     # Set up components for our platforms.
-    # await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
+    await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload config entry."""
     # Unload components for our platforms.
-    # return await hass.config_entries.async_unload_platforms(entry, _PLATFORMS)
-    return True
+    result = await hass.config_entries.async_unload_platforms(entry, _PLATFORMS)
+    del hass.data[DOMAIN]
+    return result

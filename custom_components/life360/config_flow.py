@@ -168,8 +168,8 @@ class Life360Flow(FlowHandler, ABC):
             description_placeholders={
                 "accts": "\n".join(
                     [
-                        f"{uname}{'' if acct.enabled else ' (disabled)'}"
-                        for uname, acct in self._accts.items()
+                        f"{username}{'' if acct.enabled else ' (disabled)'}"
+                        for username, acct in self._accts.items()
                     ]
                 )
             },

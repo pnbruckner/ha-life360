@@ -16,9 +16,6 @@ SPEED_FACTOR_MPH = 2.25
 SPEED_DIGITS = 1
 UPDATE_INTERVAL = timedelta(seconds=10)
 
-STORAGE_KEY = DOMAIN
-STORAGE_VERSION = 1
-
 ATTR_ADDRESS = "address"
 ATTR_AT_LOC_SINCE = "at_loc_since"
 ATTR_DRIVING = "driving"
