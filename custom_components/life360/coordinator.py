@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Coroutine, Iterable
+from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -13,10 +14,11 @@ import logging
 from math import ceil
 from typing import Any, TypeVar, TypeVarTuple, cast
 
+from aiohttp import ClientSession
 from life360 import Life360Error, LoginError, NotModified, RateLimited
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -54,6 +56,14 @@ class CircleMemberData:
     mem_circles: dict[MemberID, list[CircleID]] = field(default_factory=dict)
 
 
+@dataclass
+class AccountData:
+    """Data for a Life360 account."""
+
+    session: ClientSession
+    api: helpers.Life360
+
+
 class RateLimitedAction(Enum):
     """Action to take when rate limited."""
 
@@ -75,7 +85,8 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
 
     config_entry: ConfigEntry
     __cm_data: CircleMemberData | None = None
-    _updating_cm_data: bool = False
+    _update_cm_data_unsub: CALLBACK_TYPE | None = None
+    _update_cm_data_task: asyncio.Task | None = None
 
     def __init__(self, hass: HomeAssistant, store: Life360Store) -> None:
         """Initialize data update coordinator."""
@@ -84,23 +95,25 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
         if hasattr(self, "always_update"):
             self.always_update = False
         self._store = store
-        # TODO: Update self.options & self._apis when config options change.
-        options = ConfigOptions.from_dict(self.config_entry.options)
-        self._apis = {
-            username: helpers.Life360(
-                async_create_clientsession(hass, timeout=COMM_TIMEOUT),
-                COMM_MAX_RETRIES,
-                acct.authorization,
-                verbosity=options.verbosity,
-            )
-            for username, acct in options.accounts.items()
-            if acct.enabled
-        }
+        self._options = ConfigOptions.from_dict(self.config_entry.options)
+        self._acct_data: dict[str, AccountData] = {}
+        self._create_acct_data(self._options.accounts)
         # TODO: Make this list part of data (for binary sensors)???
         self._login_error: list[str] = []
         self._member_circle_data: dict[MemberID, dict[CircleID, MemberData]] = {}
+        self._update_lock = asyncio.Lock()
+
+        self.config_entry.async_on_unload(
+            self.config_entry.add_update_listener(self._async_config_entry_updated)
+        )
+        self.config_entry.async_on_unload(self._update_cm_data_stop)
 
     async def _async_update_data(self) -> Members:
+        """Fetch the latest data from the source while holding lock."""
+        async with self._update_lock:
+            return await self._do_update()
+
+    async def _do_update(self) -> Members:
         """Fetch the latest data from the source."""
         # TODO: How to handle errors, especially per username/api???
         result = Members()
@@ -155,7 +168,7 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
         #       and eventually, the names of the Places in each.
         if not self.__cm_data:
             # Try to get Circles & Members from storage.
-            self.__cm_data = await self._load_cm_data()
+            self.__cm_data = self._load_cm_data()
             run_now = False
             if not self.__cm_data:
                 # Get Circles & Members from server, returning immediately with whatever
@@ -166,7 +179,7 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
             start_updating = partial(
                 self.config_entry.async_create_background_task,
                 self.hass,
-                self._start_cm_data_updating(run_now=run_now),
+                self._update_cm_data_start(run_now=run_now),
                 "Start periodic Circle & Member updating",
             )
             try:
@@ -176,7 +189,7 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
 
         return self.__cm_data
 
-    async def _load_cm_data(self) -> CircleMemberData | None:
+    def _load_cm_data(self) -> CircleMemberData | None:
         """Load Circles & Members from storage."""
         if not self._store.loaded_ok:
             _LOGGER.warning(
@@ -195,14 +208,20 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
     async def _get_cm_data(self, at_startup: bool) -> tuple[CircleMemberData, bool]:
         """Get Life360 Circles & Members seen from all enabled accounts.
 
-        Returns CircleMemberData and a bool that is True if any requests were rate
-        limited.
+        If at_startup is True and any requests are rate limited, don't wait, just return
+        what is currently available.
+
+        If at_startup is False and any requests are rate limited, wait as indicated for
+        each and return when all are done.
+
+        Returns CircleMemberData and a bool that is True if at_startup is True and any
+        requests were rate limited.
         """
         if self.__cm_data:
             old_circles = self.__cm_data.circles
         else:
             old_circles = {}
-        usernames = list(self._apis)
+        usernames = list(self._acct_data)
 
         circles: dict[CircleID, CircleData] = {}
         raw_circles_list = await self._get_circles(usernames, at_startup)
@@ -229,7 +248,7 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
             for username in circle_data.usernames:
                 raw_members = await self._request(
                     username,
-                    self._apis[username].get_circle_members,
+                    self._acct_data[username].api.get_circle_members,
                     cid,
                     msg=f"while getting Members in {circle_data.name} Circle",
                 )
@@ -241,8 +260,18 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
                         mem_circles.setdefault(mid, []).append(cid)
                     break
 
+        # Protect storage writing in case we get cancelled while it's running. We do not
+        # want to interrupt that process. It is an atomic operation, so if we get
+        # cancelled and called again while it's running, and we somehow manage to get to
+        # this point again while it still hasn't finished, we'll just wait until it is
+        # done and it will be begun again with the new data.
         self._store.circles = circles
-        await self._store.save()
+        save_task = self.config_entry.async_create_task(
+            self.hass,
+            self._store.save(),
+            "Save to Life360 storage",
+        )
+        await asyncio.shield(save_task)
 
         return CircleMemberData(circles, mem_circles), rate_limited
 
@@ -258,7 +287,7 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
                     self._request(
                         username,
                         partial(
-                            self._apis[username].get_circles,
+                            self._acct_data[username].api.get_circles,
                             raise_not_modified=not at_startup,
                         ),
                         msg="while getting Circles",
@@ -270,24 +299,36 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
             )
         )
 
-    async def _start_cm_data_updating(self, run_now: bool) -> None:
+    async def _update_cm_data_start(self, run_now: bool) -> None:
         """Start periodic updating of Circles & Members data."""
         if run_now:
             self.__cm_data, _ = await self._get_cm_data(at_startup=False)
-        self.config_entry.async_on_unload(
-            async_track_time_interval(
-                self.hass, self._update_cm_data, CIRCLE_UPDATE_INTERVAL
-            )
+        self._update_cm_data_unsub = async_track_time_interval(
+            self.hass, self._update_cm_data, CIRCLE_UPDATE_INTERVAL
         )
+
+    async def _update_cm_data_stop(self) -> None:
+        """Stop periodic updating of Circles & Members data."""
+        # Stop running it periodically.
+        if self._update_cm_data_unsub:
+            self._update_cm_data_unsub()
+            self._update_cm_data_unsub = None
+
+        # Stop it, and wait for it to stop, if it is running now.
+        if task := self._update_cm_data_task:
+            self._update_cm_data_task = None
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
     async def _update_cm_data(self, now: datetime) -> None:
         """Update Circles & Members data."""
         # Guard against being called again while previous call is still in progress.
-        if self._updating_cm_data:
+        if self._update_cm_data_task:
             return
-        self._updating_cm_data = True
+        self._update_cm_data_task = asyncio.current_task()
         self.__cm_data, _ = await self._get_cm_data(at_startup=False)
-        self._updating_cm_data = False
+        self._update_cm_data_task = None
 
     async def _get_raw_member_list(
         self, mid: MemberID, cm_data: CircleMemberData
@@ -313,7 +354,7 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
             raw_member = await self._request(
                 username,
                 partial(
-                    self._apis[username].get_circle_member,
+                    self._acct_data[username].api.get_circle_member,
                     cid,
                     mid,
                     raise_not_modified=True,
@@ -377,3 +418,58 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
         self._login_error.append(username)
         # TODO: Log repair issue.
         # TODO: How to "reactivate" account (i.e., remove from self._login_error)???
+
+    def _create_acct_data(self, acct_ids: Iterable[str]) -> None:
+        """Create Life360 API objects for accounts."""
+        for acct_id in acct_ids:
+            acct = self._options.accounts[acct_id]
+            if not acct.enabled:
+                continue
+            session = async_create_clientsession(self.hass, timeout=COMM_TIMEOUT)
+            api = helpers.Life360(
+                session,
+                COMM_MAX_RETRIES,
+                acct.authorization,
+                verbosity=self._options.verbosity,
+            )
+            self._acct_data[acct_id] = AccountData(session, api)
+
+    async def _async_config_entry_updated(
+        self, _: HomeAssistant, entry: ConfigEntry
+    ) -> None:
+        """Run when the config entry has been updated."""
+        if self._options == (new_options := ConfigOptions.from_dict(entry.options)):
+            return
+
+        old_options = self._options
+        self._options = new_options
+
+        old_accts = {
+            acct_id: acct
+            for acct_id, acct in old_options.accounts.items()
+            if acct.enabled
+        }
+        new_accts = {
+            acct_id: acct
+            for acct_id, acct in new_options.accounts.items()
+            if acct.enabled
+        }
+        if old_accts == new_accts and old_options.verbosity == new_options.verbosity:
+            return
+
+        await self._update_cm_data_stop()
+
+        old_acct_ids = set(old_accts)
+        new_acct_ids = set(new_accts)
+
+        async with self._update_lock:
+            for acct_id in old_acct_ids - new_acct_ids:
+                self._acct_data.pop(acct_id).session.detach()
+            self._create_acct_data(new_acct_ids - old_acct_ids)
+            for acct_id in old_acct_ids & new_acct_ids:
+                api = self._acct_data[acct_id].api
+                api.verbosity = new_options.verbosity
+                # TODO: Change API to make authorization attr directly accessible.
+                api._authorization = new_options.accounts[acct_id].authorization
+
+        await self._update_cm_data_start(run_now=True)

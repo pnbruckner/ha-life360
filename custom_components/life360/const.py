@@ -26,6 +26,7 @@ ATTR_SPEED = "speed"
 ATTR_WIFI_ON = "wifi_on"
 ATTR_IGNORED_UPDATE_REASONS = "ignored_update_reasons"
 
+# TODO: Add state to translations.
 STATE_DRIVING = "Driving"
 
 CONF_ACCOUNTS = "accounts"

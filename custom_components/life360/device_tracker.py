@@ -185,6 +185,8 @@ class Life360DeviceTracker(
             return None
         return self._data.loc.details.longitude
 
+    # TODO: When driving is True, periodically send update requests to server for
+    #       Member, maybe once a minute??? But only if enabled by config option.
     @property
     def driving(self) -> bool:
         """Return if driving."""
@@ -269,15 +271,6 @@ class Life360DeviceTracker(
             return attrs_unknown | {ATTR_REASON: "Member is not sharing location"}
         return attrs_unknown | {ATTR_REASON: self._data.err_msg}
 
-    async def _async_config_entry_updated(
-        self, _: HomeAssistant, entry: ConfigEntry
-    ) -> None:
-        """Run when the config entry has been updated."""
-        if self._options != (new_options := ConfigOptions.from_dict(entry.options)):
-            self._options = new_options
-            # Re-process current data.
-            self._handle_coordinator_update(config_changed=True)
-
     @callback
     def _handle_coordinator_update(self, config_changed: bool = False) -> None:
         """Handle updated data from the coordinator."""
@@ -297,6 +290,11 @@ class Life360DeviceTracker(
         self._prev_data = self._data
 
         super()._handle_coordinator_update()
+
+    def _update_basic_attrs(self) -> None:
+        """Update basic attributes."""
+        self._attr_name = f"Life360 {self._data.name}"
+        self._attr_entity_picture = self._data.entity_picture
 
     def _process_update(self) -> None:
         """Process new Member data."""
@@ -349,7 +347,22 @@ class Life360DeviceTracker(
                     else:
                         self._addresses = [address]
 
-    def _update_basic_attrs(self) -> None:
-        """Update basic attributes."""
-        self._attr_name = f"Life360 {self._data.name}"
-        self._attr_entity_picture = self._data.entity_picture
+    async def _async_config_entry_updated(
+        self, _: HomeAssistant, entry: ConfigEntry
+    ) -> None:
+        """Run when the config entry has been updated."""
+        if self._options == (new_options := ConfigOptions.from_dict(entry.options)):
+            return
+
+        old_options = self._options
+        self._options = new_options
+
+        need_to_reprocess = any(
+            getattr(old_options, attr) != getattr(new_options, attr)
+            for attr in ("driving", "driving_speed", "max_gps_accuracy")
+        )
+        if not need_to_reprocess:
+            return
+
+        # Re-process current data.
+        self._handle_coordinator_update(config_changed=True)
