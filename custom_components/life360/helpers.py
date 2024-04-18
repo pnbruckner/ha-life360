@@ -133,7 +133,7 @@ class LocationDetails:
     last_seen: datetime
     latitude: float
     longitude: float
-    place: str | None
+    place: str | list[str] | None
     speed: float  # mph
 
     @staticmethod

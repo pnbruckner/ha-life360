@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Coroutine, Iterable
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
 from functools import partial
 import logging
 from math import ceil
-from typing import Any, TypeVar, TypeVarTuple
+from typing import Any, TypeVar, TypeVarTuple, cast
 
 from life360 import Life360Error, LoginError, NotModified, RateLimited
 
@@ -102,6 +103,7 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
         result = Members()
 
         cm_data = await self._cm_data()
+        n_circles = len(cm_data.circles)
         raw_member_list_list = await asyncio.gather(
             *(self._get_raw_member_list(mid, cm_data) for mid in cm_data.mem_circles)
         )
@@ -117,6 +119,28 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
             if member_circle_data:
                 self._member_circle_data[mid] = member_circle_data
                 result[mid] = sorted(member_circle_data.values())[-1]
+                if n_circles > 1:
+                    # Each Circle has its own Places. Collect all the Places where the
+                    # Member might be, while keeping the Circle they came from. Then
+                    # update the chosen MemberData with the Place or Places where the
+                    # Member is, with each having a suffix of the name of its Circle.
+                    places = {
+                        cid: cast(str, member_data.loc.details.place)
+                        for cid, member_data in member_circle_data.items()
+                        if member_data.loc and member_data.loc.details.place
+                    }
+                    if places:
+                        place: str | list[str] = [
+                            f"{c_place} ({cm_data.circles[cid].name})"
+                            for cid, c_place in places.items()
+                        ]
+                        if len(place) == 1:
+                            place = place[0]
+                        member_data = deepcopy(result[mid])
+                        assert member_data.loc
+                        member_data.loc.details.place = place
+                        result[mid] = member_data
+
             elif old_member_data := self.data.get(mid):
                 result[mid] = old_member_data
 
@@ -124,6 +148,8 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
 
     async def _cm_data(self) -> CircleMemberData:
         """Return current Circle & Member data."""
+        # TODO: Create a sensor that lists all the Circles and which Members are in each
+        #       and eventually, the names of the Places in each.
         if not self.__cm_data:
             # Try to get Circles & Members from storage.
             self.__cm_data = await self._load_cm_data()
