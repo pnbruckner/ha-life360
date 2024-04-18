@@ -12,10 +12,17 @@ from typing import Any, cast
 from homeassistant.components.device_tracker import SourceType
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_BATTERY_CHARGING, ATTR_GPS_ACCURACY, STATE_UNKNOWN
+from homeassistant.const import (
+    ATTR_BATTERY_CHARGING,
+    ATTR_GPS_ACCURACY,
+    STATE_UNKNOWN,
+    UnitOfSpeed,
+)
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util.unit_conversion import SpeedConverter
+from homeassistant.util.unit_system import METRIC_SYSTEM
 
 from .const import (
     ATTR_ADDRESS,
@@ -123,6 +130,11 @@ class Life360DeviceTracker(
     def _mid(self) -> MemberID:
         """Return Member ID."""
         return self._attr_unique_id
+
+    @property
+    def _metric(self) -> bool:
+        """Return if system is configured for Metric."""
+        return self.hass.config.units is METRIC_SYSTEM
 
     def _update_basic_attrs(self) -> None:
         """Update basic attributes."""
@@ -302,6 +314,15 @@ class Life360DeviceTracker(
             else:
                 address = address1 or address2
 
+            # Speed is returned in MPH. Convert to KPH if system configured for Metric.
+            speed = self._data.loc.details.speed
+            if self._metric:
+                speed = SpeedConverter.convert(
+                    speed,
+                    UnitOfSpeed.MILES_PER_HOUR,
+                    UnitOfSpeed.KILOMETERS_PER_HOUR,
+                )
+
             attrs: dict[str, Any] = {
                 ATTR_ADDRESS: address,
                 ATTR_AT_LOC_SINCE: self._data.loc.details.at_loc_since,
@@ -309,8 +330,7 @@ class Life360DeviceTracker(
                 ATTR_DRIVING: self.driving,
                 ATTR_LAST_SEEN: self._data.loc.details.last_seen,
                 ATTR_PLACE: self._data.loc.details.place,
-                # TODO: Convert to KPH if necessary.
-                ATTR_SPEED: self._data.loc.details.speed,
+                ATTR_SPEED: speed,
                 ATTR_WIFI_ON: self._data.loc.wifi_on,
             }
             if self._ignored_update_reasons:
