@@ -251,7 +251,7 @@ class MemberData(ExtraStoredData):
     entity_picture: str | None
     loc: LocationData | None = None
     loc_missing: NoLocReason = NoLocReason.NOT_SET
-    err_msg: str | None = field(default=None, compare=False)
+    err_msg: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Return a dict representation of the data."""

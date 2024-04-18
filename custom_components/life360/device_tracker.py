@@ -74,6 +74,7 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(process_data))
 
 
+# TODO: Restore state
 class Life360DeviceTracker(
     CoordinatorEntity[Life360DataUpdateCoordinator], TrackerEntity
 ):
@@ -135,87 +136,6 @@ class Life360DeviceTracker(
     def _metric(self) -> bool:
         """Return if system is configured for Metric."""
         return self.hass.config.units is METRIC_SYSTEM
-
-    def _update_basic_attrs(self) -> None:
-        """Update basic attributes."""
-        self._attr_name = f"Life360 {self._data.name}"
-        self._attr_entity_picture = self._data.entity_picture
-
-    async def _async_config_entry_updated(
-        self, _: HomeAssistant, entry: ConfigEntry
-    ) -> None:
-        """Run when the config entry has been updated."""
-        if self._options != (new_options := ConfigOptions.from_dict(entry.options)):
-            self._options = new_options
-            # Re-process current data.
-            self._handle_coordinator_update()
-
-    def _process_update(self) -> None:
-        """Process new Member data."""
-        if not self._data.loc or not self._prev_data.loc:
-            return
-
-        # Check if we should effectively throw out new location data.
-        last_seen = self._data.loc.details.last_seen
-        prev_seen = self._prev_data.loc.details.last_seen
-        max_gps_acc = self._options.max_gps_accuracy
-        bad_last_seen = last_seen < prev_seen
-        bad_accuracy = max_gps_acc is not None and self.location_accuracy > max_gps_acc
-
-        if bad_last_seen or bad_accuracy:
-            if bad_last_seen and ATTR_LAST_SEEN not in self._ignored_update_reasons:
-                self._ignored_update_reasons.append(ATTR_LAST_SEEN)
-                _LOGGER.warning(
-                    "%s: Ignoring location update because "
-                    "last_seen (%s) < previous last_seen (%s)",
-                    self,
-                    last_seen,
-                    prev_seen,
-                )
-            if bad_accuracy and ATTR_GPS_ACCURACY not in self._ignored_update_reasons:
-                self._ignored_update_reasons.append(ATTR_GPS_ACCURACY)
-                _LOGGER.warning(
-                    "%s: Ignoring location update because "
-                    "expected GPS accuracy (%0.1f) is not met: %i",
-                    self,
-                    max_gps_acc,
-                    self.location_accuracy,
-                )
-            # Overwrite new location related data with previous values.
-            self._data.loc.details = self._prev_data.loc.details
-
-        else:
-            self._ignored_update_reasons.clear()
-
-            if (
-                address := self._data.loc.details.address
-            ) == self._data.loc.details.place:
-                address = None
-            if last_seen != prev_seen:
-                if address not in self._addresses:
-                    self._addresses = [address]
-            elif self._data.loc.details.address != self._prev_data.loc.details.address:
-                if address not in self._addresses:
-                    if len(self._addresses) < 2:
-                        self._addresses.append(address)
-                    else:
-                        self._addresses = [address]
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        # Since _process_update might overwrite parts of the Member data (e.g., if
-        # gps_accuracy is bad), and since the original data needs to be re-processed
-        # when a config option changes (e.g., GPS accuracy limit), make a copy of
-        # the data before processing it.
-        self._data = deepcopy(self.coordinator.data[self._mid])
-        self._update_basic_attrs()
-        self._process_update()
-        # Keep copy of processed data used to update entity.
-        # New server data will be compared against this on next update.
-        self._prev_data = self._data
-
-        super()._handle_coordinator_update()
 
     @property
     def force_update(self) -> bool:
@@ -348,3 +268,88 @@ class Life360DeviceTracker(
         if self._data.loc_missing is NoLocReason.NOT_SHARING:
             return attrs_unknown | {ATTR_REASON: "Member is not sharing location"}
         return attrs_unknown | {ATTR_REASON: self._data.err_msg}
+
+    async def _async_config_entry_updated(
+        self, _: HomeAssistant, entry: ConfigEntry
+    ) -> None:
+        """Run when the config entry has been updated."""
+        if self._options != (new_options := ConfigOptions.from_dict(entry.options)):
+            self._options = new_options
+            # Re-process current data.
+            self._handle_coordinator_update(config_changed=True)
+
+    @callback
+    def _handle_coordinator_update(self, config_changed: bool = False) -> None:
+        """Handle updated data from the coordinator."""
+        latest_data = self.coordinator.data[self._mid]
+        if latest_data == self._data and not config_changed:
+            return
+
+        # Since _process_update might overwrite parts of the Member data (e.g., if
+        # gps_accuracy is bad), and since the original data needs to be re-processed
+        # when a config option changes (e.g., GPS accuracy limit), make a copy of
+        # the data before processing it.
+        self._data = deepcopy(latest_data)
+        self._update_basic_attrs()
+        self._process_update()
+        # Keep copy of processed data used to update entity.
+        # New server data will be compared against this on next update.
+        self._prev_data = self._data
+
+        super()._handle_coordinator_update()
+
+    def _process_update(self) -> None:
+        """Process new Member data."""
+        if not self._data.loc or not self._prev_data.loc:
+            return
+
+        # Check if we should effectively throw out new location data.
+        last_seen = self._data.loc.details.last_seen
+        prev_seen = self._prev_data.loc.details.last_seen
+        max_gps_acc = self._options.max_gps_accuracy
+        bad_last_seen = last_seen < prev_seen
+        bad_accuracy = max_gps_acc is not None and self.location_accuracy > max_gps_acc
+
+        if bad_last_seen or bad_accuracy:
+            if bad_last_seen and ATTR_LAST_SEEN not in self._ignored_update_reasons:
+                self._ignored_update_reasons.append(ATTR_LAST_SEEN)
+                _LOGGER.warning(
+                    "%s: Ignoring location update because "
+                    "last_seen (%s) < previous last_seen (%s)",
+                    self,
+                    last_seen,
+                    prev_seen,
+                )
+            if bad_accuracy and ATTR_GPS_ACCURACY not in self._ignored_update_reasons:
+                self._ignored_update_reasons.append(ATTR_GPS_ACCURACY)
+                _LOGGER.warning(
+                    "%s: Ignoring location update because "
+                    "expected GPS accuracy (%0.1f) is not met: %i",
+                    self,
+                    max_gps_acc,
+                    self.location_accuracy,
+                )
+            # Overwrite new location related data with previous values.
+            self._data.loc.details = self._prev_data.loc.details
+
+        else:
+            self._ignored_update_reasons.clear()
+
+            if (
+                address := self._data.loc.details.address
+            ) == self._data.loc.details.place:
+                address = None
+            if last_seen != prev_seen:
+                if address not in self._addresses:
+                    self._addresses = [address]
+            elif self._data.loc.details.address != self._prev_data.loc.details.address:
+                if address not in self._addresses:
+                    if len(self._addresses) < 2:
+                        self._addresses.append(address)
+                    else:
+                        self._addresses = [address]
+
+    def _update_basic_attrs(self) -> None:
+        """Update basic attributes."""
+        self._attr_name = f"Life360 {self._data.name}"
+        self._attr_entity_picture = self._data.entity_picture

@@ -80,6 +80,9 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
     def __init__(self, hass: HomeAssistant, store: Life360Store) -> None:
         """Initialize data update coordinator."""
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=UPDATE_INTERVAL)
+        # always_update added in 2023.9.
+        if hasattr(self, "always_update"):
+            self.always_update = False
         self._store = store
         # TODO: Update self.options & self._apis when config options change.
         options = ConfigOptions.from_dict(self.config_entry.options)

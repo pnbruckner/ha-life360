@@ -14,7 +14,7 @@ COMM_MAX_RETRIES = 3
 COMM_TIMEOUT = ClientTimeout(sock_connect=15, total=60)
 SPEED_FACTOR_MPH = 2.25
 SPEED_DIGITS = 1
-UPDATE_INTERVAL = timedelta(seconds=10)
+UPDATE_INTERVAL = timedelta(seconds=5)
 
 ATTR_ADDRESS = "address"
 ATTR_AT_LOC_SINCE = "at_loc_since"
