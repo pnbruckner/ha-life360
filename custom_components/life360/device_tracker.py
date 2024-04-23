@@ -15,6 +15,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_BATTERY_CHARGING,
     ATTR_GPS_ACCURACY,
+    STATE_NOT_HOME,
     STATE_UNKNOWN,
     UnitOfSpeed,
 )
@@ -81,6 +82,7 @@ class Life360DeviceTracker(
     """Life360 Device Tracker."""
 
     _attr_attribution = ATTRIBUTION
+    _attr_translation_key = "tracker"
     _attr_unique_id: MemberID
     coordinator: Life360DataUpdateCoordinator
     _warned_loc_unknown = False
@@ -205,9 +207,10 @@ class Life360DeviceTracker(
         if not self._data.loc:
             return STATE_UNKNOWN
 
-        if self._options.driving and self.driving:
+        state = super().state
+        if state == STATE_NOT_HOME and self._options.driving and self.driving:
             return STATE_DRIVING
-        return super().state
+        return state
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:

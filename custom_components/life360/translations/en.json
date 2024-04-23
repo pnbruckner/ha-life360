@@ -53,6 +53,15 @@
             }
         }
     },
+    "entity": {
+        "device_tracker": {
+            "tracker": {
+                "state": {
+                    "driving": "Driving"
+                }
+            }
+        }
+    },
     "issues": {
         "login_error": {
             "title": "Life360 Account Login Error",
