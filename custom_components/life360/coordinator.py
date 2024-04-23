@@ -308,6 +308,8 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
                     circles[cid].aids |= old_circle_data.aids
                 else:
                     circles[cid] = old_circle_data
+                    for mid in old_circle_data.mids:
+                        mem_circles.setdefault(mid, set()).add(cid)
 
         self.__cm_data = CircleMemberData(circles, mem_circles)
 
