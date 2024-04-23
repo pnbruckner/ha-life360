@@ -168,9 +168,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN] = coordinator
 
-    # TODO: Monitor config entry updates and adjust .storage, etc. according to account
-    #       changes.
-
     # Set up components for our platforms.
     await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
     return True
@@ -182,3 +179,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     result = await hass.config_entries.async_unload_platforms(entry, _PLATFORMS)
     del hass.data[DOMAIN]
     return result
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Remove config entry."""
+    await Life360Store(hass).remove()
+    return True

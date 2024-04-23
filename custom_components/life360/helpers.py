@@ -41,6 +41,11 @@ from .const import (
 LIFE360 = Life360
 
 
+AccountID = NewType("AccountID", str)
+CircleID = NewType("CircleID", str)
+MemberID = NewType("MemberID", str)
+
+
 @dataclass
 class Account:
     """Account info."""
@@ -62,12 +67,16 @@ class Account:
 class ConfigOptions:
     """Config entry options."""
 
-    accounts: dict[str, Account] = field(default_factory=dict)
+    accounts: dict[AccountID, Account] = field(default_factory=dict)
     # CONF_SHOW_DRIVING is actually "driving" for legacy reasons.
     driving: bool = False
     driving_speed: float | None = None
     max_gps_accuracy: int | None = None
     verbosity: int = 0
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a dict representation of the data."""
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Self:
@@ -77,7 +86,7 @@ class ConfigOptions:
         """
         accts = cast(dict[str, dict[str, Any]], data[CONF_ACCOUNTS])
         return cls(
-            {username: Account.from_dict(acct) for username, acct in accts.items()},
+            {AccountID(aid): Account.from_dict(acct) for aid, acct in accts.items()},
             data[CONF_SHOW_DRIVING],
             data[CONF_DRIVING_SPEED],
             data[CONF_MAX_GPS_ACCURACY],
@@ -115,10 +124,10 @@ class ConfigOptions:
                 self.max_gps_accuracy = max(self.max_gps_accuracy, mga_int)
 
     def merge_v1_config_entry(
-        self, entry: ConfigEntry, was_enabled: bool, metric: bool
+        self, entry: ConfigEntry, enabled: bool, metric: bool
     ) -> None:
         """Merge in old v1 config entry."""
-        self._add_account(entry.data, was_enabled)
+        self._add_account(entry.data, enabled)
         self._merge_options(entry.options, metric)
 
 
@@ -320,8 +329,6 @@ class MemberData(ExtraStoredData):
         return self.loc.details.last_seen < other.loc.details.last_seen
 
 
-CircleID = NewType("CircleID", str)
-MemberID = NewType("MemberID", str)
 Members = dict[MemberID, MemberData]
 
 
@@ -330,13 +337,17 @@ class CircleData:
     """Circle data."""
 
     name: str
-    usernames: list[str] = field(default_factory=list)
-    mids: list[MemberID] = field(default_factory=list)
+    aids: set[AccountID] = field(default_factory=set)
+    mids: set[MemberID] = field(default_factory=set)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Self:
         """Initialize from a dictionary."""
-        return cls(data["name"], data["usernames"], data["mids"])
+        try:
+            aids = data["aids"]
+        except KeyError:
+            aids = data["usernames"]
+        return cls(data["name"], set(aids), set(data["mids"]))
 
 
 @dataclass
@@ -403,3 +414,7 @@ class Life360Store:
     async def save(self) -> None:
         """Write to storage."""
         await self._store.async_save(self.data.as_dict())
+
+    async def remove(self) -> None:
+        """Remove storage."""
+        await self._store.async_remove()

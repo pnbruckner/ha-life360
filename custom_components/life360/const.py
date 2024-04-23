@@ -9,7 +9,7 @@ DOMAIN = "life360"
 LOGGER = logging.getLogger(__package__)
 
 ATTRIBUTION = "Data provided by life360.com"
-CIRCLE_UPDATE_INTERVAL = timedelta(minutes=15)
+CIRCLE_UPDATE_INTERVAL = timedelta(hours=1)
 COMM_MAX_RETRIES = 3
 COMM_TIMEOUT = ClientTimeout(sock_connect=15, total=60)
 SPEED_FACTOR_MPH = 2.25

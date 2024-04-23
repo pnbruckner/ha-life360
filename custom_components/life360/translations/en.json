@@ -22,7 +22,7 @@
             },
             "acct_menu": {
                 "title": "Accounts",
-                "description": "Current accounts:\n{accts}",
+                "description": "Current accounts:\n{acct_ids}",
                 "menu_options": {
                     "add_acct": "Add account",
                     "mod_acct_sel": "Modify account",
@@ -53,6 +53,12 @@
             }
         }
     },
+    "issues": {
+        "login_error": {
+            "title": "Life360 Account Login Error",
+            "description": "Account {acct_id} credentials must be updated.\n\nTo fix, [click here](/config/integrations/integration/life360) then click CONFIGURE and modify account."
+        }
+    },
     "options": {
         "error": {
             "cannot_connect": "Failed to connect",
@@ -72,7 +78,7 @@
             },
             "acct_menu": {
                 "title": "Accounts",
-                "description": "Current accounts:\n{accts}",
+                "description": "Current accounts:\n{acct_ids}",
                 "menu_options": {
                     "add_acct": "Add account",
                     "mod_acct_sel": "Modify account",

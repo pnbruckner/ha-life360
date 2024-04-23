@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import asdict
 from functools import cached_property
 import logging
 from typing import Any, cast
@@ -26,6 +25,7 @@ from homeassistant.const import (
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowHandler, FlowResult
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers.issue_registry import async_delete_issue
 from homeassistant.helpers.selector import (
     BooleanSelector,
     NumberSelector,
@@ -50,7 +50,7 @@ from .const import (
     CONF_VERBOSITY,
     DOMAIN,
 )
-from .helpers import Account, ConfigOptions
+from .helpers import Account, AccountID, ConfigOptions
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -61,10 +61,11 @@ SET_DRIVE_SPEED = "set_drive_speed"
 class Life360Flow(FlowHandler, ABC):
     """Life360 flow mixin."""
 
-    _acct: str | None
+    _aid: AccountID | None
     _username: str | None
     _password: str
     _enabled: bool
+    _authorized_aids: set[AccountID]
 
     @cached_property
     @abstractmethod
@@ -72,8 +73,12 @@ class Life360Flow(FlowHandler, ABC):
         """Return mutable options class."""
 
     @cached_property
-    def _accts(self) -> dict[str, Account]:
-        """Return mutable account info."""
+    def _accts(self) -> dict[AccountID, Account]:
+        """Return mutable account info.
+
+        Also initializes set of successfully authorized accounts when first called.
+        """
+        self._authorized_aids = set()
         return self._opts.accounts
 
     @cached_property
@@ -84,9 +89,22 @@ class Life360Flow(FlowHandler, ABC):
         return UnitOfSpeed.MILES_PER_HOUR
 
     @property
-    def _usernames(self) -> list[str]:
-        """Return usernames for current accounts."""
+    def _aids(self) -> list[AccountID]:
+        """Return identifiers for current accounts."""
         return list(self._accts)
+
+    def _add_or_update_acct(
+        self, aid: AccountID, password: str, authorization: str, enabled: bool
+    ) -> None:
+        """Add or update an account."""
+        self._accts[aid] = Account(password, authorization, enabled)
+        if enabled:
+            self._authorized_aids.add(aid)
+
+    def _delete_acct(self, aid: AccountID) -> None:
+        """Delete an account."""
+        del self._accts[aid]
+        self._authorized_aids.discard(aid)
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -166,10 +184,10 @@ class Life360Flow(FlowHandler, ABC):
             step_id="acct_menu",
             menu_options=menu_options,
             description_placeholders={
-                "accts": "\n".join(
+                "acct_ids": "\n".join(
                     [
-                        f"{username}{'' if acct.enabled else ' (disabled)'}"
-                        for username, acct in self._accts.items()
+                        f"{aid}{'' if acct.enabled else ' (disabled)'}"
+                        for aid, acct in self._accts.items()
                     ]
                 )
             },
@@ -177,7 +195,7 @@ class Life360Flow(FlowHandler, ABC):
 
     async def async_step_add_acct(self, _: dict[str, Any] | None = None) -> FlowResult:
         """Add an account."""
-        self._acct = self._username = None
+        self._aid = self._username = None
         self._enabled = True
         return await self.async_step_acct()
 
@@ -185,14 +203,14 @@ class Life360Flow(FlowHandler, ABC):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Select an account to modify."""
-        if len(self._usernames) == 1 or user_input is not None:
+        if len(self._aids) == 1 or user_input is not None:
             if user_input is None:
-                username = self._usernames[0]
+                aid = self._aids[0]
             else:
-                username = cast(str, user_input[CONF_ACCOUNTS])
-            self._acct = self._username = username
-            self._password = self._accts[username].password
-            self._enabled = self._accts[username].enabled
+                aid = cast(AccountID, user_input[CONF_ACCOUNTS])
+            self._aid = self._username = aid
+            self._password = self._accts[aid].password
+            self._enabled = self._accts[aid].enabled
             return await self.async_step_acct()
 
         return self.async_show_form(
@@ -250,7 +268,7 @@ class Life360Flow(FlowHandler, ABC):
             step_id="acct",
             data_schema=data_schema,
             errors=errors,
-            description_placeholders={"action": "Modify" if self._acct else "Add"},
+            description_placeholders={"action": "Modify" if self._aid else "Add"},
             last_step=False,
         )
 
@@ -259,8 +277,8 @@ class Life360Flow(FlowHandler, ABC):
     ) -> FlowResult:
         """Delete accounts."""
         if user_input is not None:
-            for acct in cast(list[str], user_input[CONF_ACCOUNTS]):
-                del self._accts[acct]
+            for aid in cast(list[AccountID], user_input[CONF_ACCOUNTS]):
+                self._delete_acct(aid)
             return await self.async_step_acct_menu()
 
         return self.async_show_form(
@@ -274,7 +292,7 @@ class Life360Flow(FlowHandler, ABC):
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_ACCOUNTS): SelectSelector(
-                    SelectSelectorConfig(options=self._usernames, multiple=multiple),
+                    SelectSelectorConfig(options=self._aids, multiple=multiple),
                 )
             }
         )
@@ -304,10 +322,10 @@ class Life360Flow(FlowHandler, ABC):
             # account is re-enabled, a new authorization will be obtained.
             authorization = ""
 
-        if self._acct and self._username != self._acct:
-            del self._accts[self._acct]
-        self._accts[self._username] = Account(
-            self._password, authorization, self._enabled
+        if self._aid and self._username != self._aid:
+            self._delete_acct(self._aid)
+        self._add_or_update_acct(
+            AccountID(self._username), self._password, authorization, self._enabled
         )
 
     @abstractmethod
@@ -347,7 +365,7 @@ class Life360ConfigFlow(ConfigFlow, Life360Flow, domain=DOMAIN):
     async def async_step_done(self, _: dict[str, Any] | None = None) -> FlowResult:
         """Finish the flow."""
         return self.async_create_entry(
-            title="Life360", data={}, options=asdict(self._opts)
+            title="Life360", data={}, options=self._opts.as_dict()
         )
 
 
@@ -361,4 +379,11 @@ class Life360OptionsFlow(OptionsFlowWithConfigEntry, Life360Flow):
 
     async def async_step_done(self, _: dict[str, Any] | None = None) -> FlowResult:
         """Finish the flow."""
-        return self.async_create_entry(title="", data=asdict(self._opts))
+        # Delete repair issues for any accounts that were deleted, and for any accounts
+        # that are still present and that were successfully reauthorized.
+        old_opts = ConfigOptions.from_dict(self.options)
+        del_aids = set(old_opts.accounts) - set(self._opts.accounts)
+        for aid in del_aids | self._authorized_aids:
+            async_delete_issue(self.hass, DOMAIN, aid)
+
+        return self.async_create_entry(title="", data=self._opts.as_dict())
