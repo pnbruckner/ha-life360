@@ -243,6 +243,40 @@ class LocationData:
         )
 
 
+@dataclass
+class MemberDetails:
+    """Life360 Member "static" details."""
+
+    # TODO: Remove before beta.
+    # This field should only be None when reading .storage/life360 from earlier versions
+    # that did not store mem_details. The "= None" and type ignore can be removed.
+    name: str = None  # type: ignore[assignment]
+    entity_picture: str | None = None
+
+    @classmethod
+    def from_dict(cls, restored: Mapping[str, Any]) -> Self:
+        """Initialize from a dictionary.
+
+        Raises KeyError if any data is missing.
+        """
+        return cls(
+            restored["name"],
+            restored["entity_picture"],
+        )
+
+    @classmethod
+    def from_server(cls, raw_member: Mapping[str, Any]) -> Self:
+        """Initialize from Member's data from server."""
+        first = raw_member["firstName"]
+        last = raw_member["lastName"]
+        if first and last:
+            name = f"{first} {last}"
+        else:
+            name = first or last or "No Name"
+        entity_picture = raw_member["avatar"]
+        return cls(name, entity_picture)
+
+
 class NoLocReason(IntEnum):
     """Reason why Member location data is missing."""
 
@@ -256,8 +290,7 @@ class NoLocReason(IntEnum):
 class MemberData(ExtraStoredData):
     """Life360 Member data."""
 
-    name: str
-    entity_picture: str | None
+    details: MemberDetails
     loc: LocationData | None = None
     loc_missing: NoLocReason = NoLocReason.NOT_SET
     err_msg: str | None = None
@@ -278,8 +311,7 @@ class MemberData(ExtraStoredData):
         else:
             loc = None
         return cls(
-            restored["name"],
-            restored["entity_picture"],
+            MemberDetails.from_dict(restored),
             loc,
             NoLocReason(restored["loc_missing"]),
             restored["err_msg"],
@@ -288,17 +320,11 @@ class MemberData(ExtraStoredData):
     @classmethod
     def from_server(cls, raw_member: Mapping[str, Any]) -> Self:
         """Initialize from Member's data from server."""
-        first = raw_member["firstName"]
-        last = raw_member["lastName"]
-        if first and last:
-            name = f"{first} {last}"
-        else:
-            name = first or last or "No Name"
-        entity_picture = raw_member["avatar"]
+        details = MemberDetails.from_server(raw_member)
 
         if not int(raw_member["features"]["shareLocation"]):
             # Member isn't sharing location with this Circle.
-            return cls(name, entity_picture, loc_missing=NoLocReason.NOT_SHARING)
+            return cls(details, loc_missing=NoLocReason.NOT_SHARING)
 
         if not (raw_loc := raw_member["location"]):
             if err_msg := raw_member["issues"]["title"]:
@@ -311,9 +337,9 @@ class MemberData(ExtraStoredData):
                     "See https://www.life360.com/support/"
                 )
                 loc_missing = NoLocReason.NO_REASON
-            return cls(name, entity_picture, loc_missing=loc_missing, err_msg=err_msg)
+            return cls(details, loc_missing=loc_missing, err_msg=err_msg)
 
-        return cls(name, entity_picture, LocationData.from_server(raw_loc))
+        return cls(details, LocationData.from_server(raw_loc))
 
     # Since a Member can exist in more than one Circle, and the data retrieved for the
     # Member might be different in each (e.g., some might not share location info but
@@ -343,6 +369,11 @@ class CircleData:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Self:
         """Initialize from a dictionary."""
+        # TODO: Remove before beta.
+        # Originally the account identifiers were stored under "usernames". Now it's
+        # "aids" (account IDs) since eventually hope to add login by phone number, and
+        # the account ID will then be a combination of country code & national number.
+        # Should drop the try..except.
         try:
             aids = data["aids"]
         except KeyError:
@@ -355,6 +386,7 @@ class StoredData:
     """Life360 storage data."""
 
     circles: dict[CircleID, CircleData] = field(default_factory=dict)
+    mem_details: dict[MemberID, MemberDetails] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         """Return a dict representation of the data."""
@@ -363,12 +395,23 @@ class StoredData:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Self:
         """Initialize from a dictionary."""
-        return cls(
-            {
-                cid: CircleData.from_dict(circle_data)
-                for cid, circle_data in data["circles"].items()
+        circles = {
+            cid: CircleData.from_dict(circle_data)
+            for cid, circle_data in data["circles"].items()
+        }
+        # TODO: Remove before beta.
+        # "mem_details" was not originally stored. Drop the try.
+        try:
+            mem_details = {
+                mid: MemberDetails.from_dict(mem_data)
+                for mid, mem_data in data["mem_details"].items()
             }
-        )
+        except KeyError:
+            mem_details = {}
+            for circle_data in circles.values():
+                for mid in circle_data.mids:
+                    mem_details.setdefault(mid, MemberDetails())
+        return cls(circles, mem_details)
 
 
 class Life360Store:
@@ -395,6 +438,16 @@ class Life360Store:
     def circles(self, circles: dict[CircleID, CircleData]) -> None:
         """Update circles."""
         self.data.circles = circles
+
+    @property
+    def mem_details(self) -> dict[MemberID, MemberDetails]:
+        """Return Member static details."""
+        return self.data.mem_details
+
+    @mem_details.setter
+    def mem_details(self, mem_details: dict[MemberID, MemberDetails]) -> None:
+        """Update Member static details."""
+        self.data.mem_details = mem_details
 
     async def load(self) -> bool:
         """Load from storage.

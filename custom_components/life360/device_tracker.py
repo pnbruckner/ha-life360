@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from contextlib import suppress
 from copy import deepcopy
@@ -52,26 +53,52 @@ async def async_setup_entry(
 ) -> None:
     """Set up the device tracker platform."""
     coordinator = cast(Life360DataUpdateCoordinator, hass.data[DOMAIN])
-    tracked_mids: set[MemberID] = set()
+    entities: dict[MemberID, Life360DeviceTracker] = {}
 
-    def remove_tracked_mid(mid: MemberID) -> None:
-        """Remove a tracked member."""
-        tracked_mids.remove(mid)
-
-    def process_data() -> None:
+    async def async_process_data() -> None:
         """Process new Life360 Member data."""
-        if not (new_mids := set(coordinator.data) - tracked_mids):
-            return
-        new_entities: list[Life360DeviceTracker] = []
-        for mid in new_mids:
-            entity = Life360DeviceTracker(coordinator, mid)
-            tracked_mids.add(mid)
-            entity.async_on_remove(partial(remove_tracked_mid, mid))
-            new_entities.append(entity)
-        _LOGGER.debug("add entities: %s", new_entities)
-        async_add_entities(new_entities)
+        mids = set(coordinator.data)
+        cur_mids = set(entities)
+        del_mids = cur_mids - mids
+        add_mids = mids - cur_mids
 
-    process_data()
+        if del_mids:
+            del_entities: list[Life360DeviceTracker] = []
+            names: list[str] = []
+            for mid in del_mids:
+                entity = entities.pop(mid)
+                del_entities.append(entity)
+                names.append(str(entity))
+            _LOGGER.debug("Deleting entities: %s", ", ".join(names))
+            await asyncio.gather(*(entity.async_remove() for entity in del_entities))
+
+        if add_mids:
+            new_entities: list[Life360DeviceTracker] = []
+            names = []
+            for mid in add_mids:
+                entity = Life360DeviceTracker(coordinator, mid)
+                entities[mid] = entity
+                new_entities.append(entity)
+                names.append(str(entity))
+            _LOGGER.debug("Adding entities: %s", ", ".join(names))
+            async_add_entities(new_entities)
+
+    @callback
+    def process_data() -> None:
+        """Process Members."""
+        create_process_task = partial(
+            coordinator.config_entry.async_create_background_task,
+            hass,
+            async_process_data(),
+            "Process Members",
+        )
+        # eager_start parameter was added in 2024.3.
+        try:
+            create_process_task(eager_start=True)
+        except TypeError:
+            create_process_task()
+
+    await async_process_data()
     entry.async_on_unload(coordinator.async_add_listener(process_data))
 
 
@@ -124,7 +151,7 @@ class Life360DeviceTracker(
         if name := (
             self.registry_entry
             and (self.registry_entry.name or self.registry_entry.original_name)
-            or self._data.name
+            or self._data.details.name
         ):
             return f"{name} ({self.entity_id})"
         return self.entity_id
@@ -270,6 +297,8 @@ class Life360DeviceTracker(
                 ATTR_REASON,
             )
 
+        if self._data.loc_missing is NoLocReason.NOT_SET:
+            return attrs_unknown | {ATTR_REASON: "Member data could not be retrieved"}
         if self._data.loc_missing is NoLocReason.NOT_SHARING:
             return attrs_unknown | {ATTR_REASON: "Member is not sharing location"}
         return attrs_unknown | {ATTR_REASON: self._data.err_msg}
@@ -277,6 +306,11 @@ class Life360DeviceTracker(
     @callback
     def _handle_coordinator_update(self, config_changed: bool = False) -> None:
         """Handle updated data from the coordinator."""
+        # In case Member is no longer visible, and hence, is no longer in coordinator
+        # data, just leave. The entity will be removed very soon.
+        if self._mid not in self.coordinator.data:
+            return
+
         latest_data = self.coordinator.data[self._mid]
         if latest_data == self._data and not config_changed:
             return
@@ -296,8 +330,8 @@ class Life360DeviceTracker(
 
     def _update_basic_attrs(self) -> None:
         """Update basic attributes."""
-        self._attr_name = f"Life360 {self._data.name}"
-        self._attr_entity_picture = self._data.entity_picture
+        self._attr_name = f"Life360 {self._data.details.name}"
+        self._attr_entity_picture = self._data.details.entity_picture
 
     def _process_update(self) -> None:
         """Process new Member data."""
