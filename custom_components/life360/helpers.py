@@ -210,13 +210,31 @@ class LocationDetails:
 
 
 @dataclass
+class Life360ExtraStoredData(ExtraStoredData):
+    """Life360 extra stored data."""
+
+    loc_details: LocationDetails | None
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a dict representation of the data."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, restored: Mapping[str, Any]) -> Self:
+        """Initialize from a dictionary."""
+        if restored_loc_details := restored["loc_details"]:
+            return cls(LocationDetails.from_dict(restored_loc_details))
+        return cls(None)
+
+
+@dataclass
 class LocationData:
     """Life360 Member location data."""
 
     details: LocationDetails
-    battery_charging: bool
-    battery_level: int
-    wifi_on: bool
+    battery_charging: bool = False
+    battery_level: int = 0
+    wifi_on: bool = False
 
     @classmethod
     def from_dict(cls, restored: Mapping[str, Any]) -> Self:
@@ -287,7 +305,7 @@ class NoLocReason(IntEnum):
 
 
 @dataclass
-class MemberData(ExtraStoredData):
+class MemberData:
     """Life360 Member data."""
 
     details: MemberDetails

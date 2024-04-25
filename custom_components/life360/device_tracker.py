@@ -22,6 +22,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util.unit_conversion import SpeedConverter
 from homeassistant.util.unit_system import METRIC_SYSTEM
@@ -41,7 +42,13 @@ from .const import (
     STATE_DRIVING,
 )
 from .coordinator import Life360DataUpdateCoordinator
-from .helpers import ConfigOptions, MemberID, NoLocReason
+from .helpers import (
+    ConfigOptions,
+    Life360ExtraStoredData,
+    LocationData,
+    MemberID,
+    NoLocReason,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -104,7 +111,7 @@ async def async_setup_entry(
 
 # TODO: Restore state
 class Life360DeviceTracker(
-    CoordinatorEntity[Life360DataUpdateCoordinator], TrackerEntity
+    CoordinatorEntity[Life360DataUpdateCoordinator], TrackerEntity, RestoreEntity
 ):
     """Life360 Device Tracker."""
 
@@ -303,6 +310,33 @@ class Life360DeviceTracker(
             return attrs_unknown | {ATTR_REASON: "Member is not sharing location"}
         return attrs_unknown | {ATTR_REASON: self._data.err_msg}
 
+    @property
+    def extra_restore_state_data(self) -> Life360ExtraStoredData:
+        """Return Life360 specific state data to be restored."""
+        if not self._data.loc:
+            return Life360ExtraStoredData(None)
+        return Life360ExtraStoredData(self._data.loc.details)
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity about to be added to hass."""
+        await super().async_added_to_hass()
+
+        # Restore state if possible.
+        if not (last_extra_data := await self.async_get_last_extra_data()):
+            return
+        self._prev_data = deepcopy(self._data)
+        prev_loc_details = Life360ExtraStoredData.from_dict(
+            last_extra_data.as_dict()
+        ).loc_details
+        if prev_loc_details:
+            self._prev_data.loc = LocationData(prev_loc_details)
+            # Address data can be very old. Throw it away so it's not combined with
+            # current address data.
+            self._prev_data.loc.details.address = None
+            self._process_update()
+        else:
+            self._prev_data.loc = None
+
     @callback
     def _handle_coordinator_update(self, config_changed: bool = False) -> None:
         """Handle updated data from the coordinator."""
@@ -322,9 +356,6 @@ class Life360DeviceTracker(
         self._data = deepcopy(latest_data)
         self._update_basic_attrs()
         self._process_update()
-        # Keep copy of processed data used to update entity.
-        # New server data will be compared against this on next update.
-        self._prev_data = self._data
 
         super()._handle_coordinator_update()
 
@@ -336,6 +367,7 @@ class Life360DeviceTracker(
     def _process_update(self) -> None:
         """Process new Member data."""
         if not self._data.loc or not self._prev_data.loc:
+            self._prev_data = self._data
             return
 
         # Check if we should effectively throw out new location data.
@@ -364,7 +396,7 @@ class Life360DeviceTracker(
                     max_gps_acc,
                     self.location_accuracy,
                 )
-            # Overwrite new location related data with previous values.
+            # Overwrite new location details with previous values.
             self._data.loc.details = self._prev_data.loc.details
 
         else:
@@ -383,6 +415,8 @@ class Life360DeviceTracker(
                         self._addresses.append(address)
                     else:
                         self._addresses = [address]
+
+        self._prev_data = self._data
 
     async def _async_config_entry_updated(
         self, _: HomeAssistant, entry: ConfigEntry
