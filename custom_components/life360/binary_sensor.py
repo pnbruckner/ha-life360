@@ -59,6 +59,7 @@ class Life360BinarySensor(BinarySensorEntity):
 
     _attr_attribution = ATTRIBUTION
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_should_poll = False
 
     def __init__(
         self, coordinator: Life360DataUpdateCoordinator, aid: AccountID
