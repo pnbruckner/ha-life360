@@ -129,6 +129,12 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
 
     def acct_online(self, aid: AccountID) -> bool:
         """Return if account is online."""
+        # When config updates and there's a new, enabled account, binary sensor could
+        # get created before coordinator finishes updating from the same event. In that
+        # case, just return True. If/when the account is determined to be offline, the
+        # binary sensor will be updated accordingly.
+        if aid not in self._acct_data:
+            return True
         return self._acct_data[aid].online
 
     # TODO: Remove this once implementation is stable.

@@ -35,20 +35,23 @@ async def async_setup_entry(
     async def process_config(hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Add and/or remove binary online sensors."""
         options = ConfigOptions.from_dict(entry.options)
-        aids = set(options.accounts)
+        aids = {aid for aid, acct in options.accounts.items() if acct.enabled}
         cur_aids = set(entities)
         del_aids = cur_aids - aids
         add_aids = aids - cur_aids
 
         if del_aids:
             old_entities = [entities.pop(aid) for aid in del_aids]
-            _LOGGER.debug("Deleting binary sensors for: %s", ", ".join(del_aids))
+            _LOGGER.debug("Deleting binary online sensors for: %s", ", ".join(del_aids))
             await asyncio.gather(*(entity.async_remove() for entity in old_entities))
 
         if add_aids:
-            new_entities = [Life360BinarySensor(coordinator, aid) for aid in add_aids]
+            new_entities = {
+                aid: Life360BinarySensor(coordinator, aid) for aid in add_aids
+            }
+            entities.update(new_entities)
             _LOGGER.debug("Adding binary online sensors for: %s", ", ".join(add_aids))
-            async_add_entities(new_entities)
+            async_add_entities(new_entities.values())
 
     await process_config(hass, entry)
     entry.async_on_unload(entry.add_update_listener(process_config))
