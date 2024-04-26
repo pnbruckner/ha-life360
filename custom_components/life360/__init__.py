@@ -22,10 +22,7 @@ from .helpers import ConfigOptions, Life360Store
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 _LOGGER = logging.getLogger(__name__)
-_PLATFORMS = [
-    # Platform.BINARY_SENSOR,
-    Platform.DEVICE_TRACKER,
-]
+_PLATFORMS = [Platform.BINARY_SENSOR, Platform.DEVICE_TRACKER]
 
 
 def _migrate_entity(

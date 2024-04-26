@@ -72,7 +72,6 @@ class AccountData:
 
     session: ClientSession
     api: helpers.Life360
-    # TODO: Make this list part of data (for binary sensors)???
     failed: asyncio.Event
     failed_task: asyncio.Task
     online: bool = True

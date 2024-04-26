@@ -64,14 +64,14 @@ async def async_setup_entry(
         add_mids = mids - cur_mids
 
         if del_mids:
-            del_entities: list[Life360DeviceTracker] = []
+            old_entities: list[Life360DeviceTracker] = []
             names: list[str] = []
             for mid in del_mids:
                 entity = entities.pop(mid)
-                del_entities.append(entity)
+                old_entities.append(entity)
                 names.append(str(entity))
             _LOGGER.debug("Deleting entities: %s", ", ".join(names))
-            await asyncio.gather(*(entity.async_remove() for entity in del_entities))
+            await asyncio.gather(*(entity.async_remove() for entity in old_entities))
 
         if add_mids:
             new_entities: list[Life360DeviceTracker] = []
@@ -88,7 +88,7 @@ async def async_setup_entry(
     def process_data() -> None:
         """Process Members."""
         create_process_task = partial(
-            coordinator.config_entry.async_create_background_task,
+            entry.async_create_background_task,
             hass,
             async_process_data(),
             "Process Members",

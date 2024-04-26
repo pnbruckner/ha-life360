@@ -1,73 +1,87 @@
 """Life360 Binary Sensor."""
 
-# from __future__ import annotations
+from __future__ import annotations
 
-# from collections.abc import Mapping
-# from typing import Any
+import asyncio
+from functools import partial
+import logging
+from typing import cast
 
-# from homeassistant.components.binary_sensor import (
-#     BinarySensorDeviceClass,
-#     BinarySensorEntity,
-# )
-# from homeassistant.config_entries import ConfigEntry
-# from homeassistant.core import HomeAssistant, callback
-# from homeassistant.exceptions import ConfigEntryAuthFailed
-# from homeassistant.helpers.entity_platform import AddEntitiesCallback
-# from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-# from .const import ATTR_REASON
-# from .coordinator import Life360DataUpdateCoordinator, life360_central_coordinator
+from .const import ATTRIBUTION, DOMAIN, SIGNAL_ACCT_STATUS
+from .coordinator import Life360DataUpdateCoordinator
+from .helpers import AccountID, ConfigOptions
 
-
-# async def async_setup_entry(
-#     hass: HomeAssistant,
-#     config_entry: ConfigEntry,
-#     async_add_entities: AddEntitiesCallback,
-# ) -> None:
-#     """Set up the binary sensory platform."""
-#     coordinator = life360_central_coordinator(hass).config_coordinator(
-#         config_entry.entry_id
-#     )
-#     async_add_entities([Life360BinarySensor(coordinator)])
+_LOGGER = logging.getLogger(__name__)
 
 
-# class Life360BinarySensor(
-#     CoordinatorEntity[Life360DataUpdateCoordinator], BinarySensorEntity
-# ):
-#     """Life360 Binary Sensor."""
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up the binary sensory platform."""
+    coordinator = cast(Life360DataUpdateCoordinator, hass.data[DOMAIN])
+    entities: dict[AccountID, Life360BinarySensor] = {}
 
-#     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    async def process_config(hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Add and/or remove binary online sensors."""
+        options = ConfigOptions.from_dict(entry.options)
+        aids = set(options.accounts)
+        cur_aids = set(entities)
+        del_aids = cur_aids - aids
+        add_aids = aids - cur_aids
 
-#     def __init__(self, coordinator: Life360DataUpdateCoordinator) -> None:
-#         """Initialize binary sensor."""
-#         unique_id = coordinator.config_entry.unique_id
-#         self._attr_name = f"life360 online ({unique_id})"
-#         self._attr_unique_id = unique_id
-#         super().__init__(coordinator)
-#         self._attr_is_on = self.is_online
+        if del_aids:
+            old_entities = [entities.pop(aid) for aid in del_aids]
+            _LOGGER.debug("Deleting binary sensors for: %s", ", ".join(del_aids))
+            await asyncio.gather(*(entity.async_remove() for entity in old_entities))
 
-#     @property
-#     def is_online(self) -> bool:
-#         """Return if config/account is online."""
-#         return super().available
+        if add_aids:
+            new_entities = [Life360BinarySensor(coordinator, aid) for aid in add_aids]
+            _LOGGER.debug("Adding binary online sensors for: %s", ", ".join(add_aids))
+            async_add_entities(new_entities)
 
-#     @property
-#     def available(self) -> bool:
-#         """Return if entity is available."""
-#         return True
+    await process_config(hass, entry)
+    entry.async_on_unload(entry.add_update_listener(process_config))
 
-#     @callback
-#     def _handle_coordinator_update(self) -> None:
-#         """Handle updated data from the coordinator."""
-#         self._attr_is_on = self.is_online
-#         super()._handle_coordinator_update()
 
-#     @property
-#     def extra_state_attributes(self) -> Mapping[str, Any] | None:
-#         """Return entity specific state attributes."""
-#         if self.is_online:
-#             return None
+class Life360BinarySensor(BinarySensorEntity):
+    """Life360 Binary Sensor."""
 
-#         if isinstance(self.coordinator.last_exception, ConfigEntryAuthFailed):
-#             return {ATTR_REASON: "Login error"}
-#         return {ATTR_REASON: "Server communication error"}
+    _attr_attribution = ATTRIBUTION
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    def __init__(
+        self, coordinator: Life360DataUpdateCoordinator, aid: AccountID
+    ) -> None:
+        """Initialize binary sensor."""
+        self._attr_name = f"Life360 online ({aid})"
+        self._attr_unique_id = aid
+        self._online = partial(coordinator.acct_online, aid)
+
+    @property
+    def is_on(self) -> bool:
+        """Return if account is online."""
+        return self._online()
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity about to be added to hass."""
+
+        @callback
+        def write_state(aid: AccountID) -> None:
+            """Write state if account status was updated."""
+            if aid == cast(AccountID, self._attr_unique_id):
+                self.async_write_ha_state()
+
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, SIGNAL_ACCT_STATUS, write_state)
+        )
