@@ -22,6 +22,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -33,6 +34,7 @@ from .const import (
     COMM_MAX_RETRIES,
     COMM_TIMEOUT,
     DOMAIN,
+    SIGNAL_ACCT_STATUS,
     UPDATE_INTERVAL,
 )
 from .helpers import (
@@ -73,6 +75,7 @@ class AccountData:
     # TODO: Make this list part of data (for binary sensors)???
     failed: asyncio.Event
     failed_task: asyncio.Task
+    online: bool = True
 
 
 class LoginRateLimitErrorResp(Enum):
@@ -124,6 +127,10 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
             self.config_entry.add_update_listener(self._config_entry_updated)
         )
         self.config_entry.async_on_unload(self._update_cm_data_stop)
+
+    def acct_online(self, aid: AccountID) -> bool:
+        """Return if account is online."""
+        return self._acct_data[aid].online
 
     # TODO: Remove this once implementation is stable.
     def _validate_cm_data(self) -> None:
@@ -279,8 +286,8 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
         """Update Life360 Circles & Members seen from all enabled accounts."""
         # Guard against being called again while previous call is still in progress.
         if self._update_cm_data_task:
-            _LOGGER.warning("Background Circle & Member update taking a long time")
             return
+
         _LOGGER.debug("Begin updating Circles & Members")
         self._update_cm_data_task = cast(asyncio.Task, asyncio.current_task())
         cancelled = False
@@ -438,7 +445,6 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
 
     # _requests = 0
 
-    # TODO: Add some overall timeout to make sure rate limiting & retrying can't make it take forever???
     async def _request(
         self,
         aid: AccountID,
@@ -451,71 +457,98 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
         if self._acct_data[aid].failed.is_set():
             return RequestError.NO_DATA
 
-        login_errors = 0
-        failed_task = self._acct_data[aid].failed_task
-        while True:
-            request_task = self.config_entry.async_create_background_task(
-                self.hass,
-                target(*args),
-                f"Make request to {aid}",
-            )
-            done, _ = await asyncio.wait(
-                [failed_task, request_task], return_when=asyncio.FIRST_COMPLETED
-            )
-            if failed_task in done:
-                request_task.cancel()
-                with suppress(asyncio.CancelledError, Life360Error):
-                    await request_task
-                return RequestError.NO_DATA
+        start = dt_util.now()
+        delay: int | None = None
+        delay_reason = ""
+        warned = False
 
-            try:
-                # if aid == "federicktest95@gmail.com":
-                #     self._requests += 1
-                #     if self._requests == 1:
-                #         request_task.cancel()
-                #         raise LoginError("TEST TEST TEST")
-                return await request_task
-            except NotModified:
-                return RequestError.NOT_MODIFIED
-            except LoginError as exc:
-                if lrle_resp is LoginRateLimitErrorResp.RETRY and login_errors < 4:
-                    login_errors += 1
-                    delay = 15 * 60
+        failed_task = self._acct_data[aid].failed_task
+        try:
+            while True:
+                if delay is not None:
+                    if (
+                        not warned
+                        and (dt_util.now() - start).total_seconds() + delay > 60 * 60
+                    ):
+                        _LOGGER.warning(
+                            "Getting response from Life360 for %s "
+                            "is taking longer than expected",
+                            aid,
+                        )
+                        warned = True
                     _LOGGER.debug(
-                        "%s: login error %s: will retry in %i s", aid, msg, delay
+                        "%s: %s %s: will retry in %i s", aid, delay_reason, msg, delay
                     )
                     await asyncio.sleep(delay)
-                    continue
-                level = (
-                    logging.DEBUG
-                    if lrle_resp is LoginRateLimitErrorResp.SILENT
-                    else logging.ERROR
+                request_task = self.config_entry.async_create_background_task(
+                    self.hass,
+                    target(*args),
+                    f"Make request to {aid}",
                 )
-                _LOGGER.log(level, "%s: login error %s: %s", aid, msg, exc)
-                if lrle_resp is not LoginRateLimitErrorResp.SILENT:
-                    self._handle_login_error(aid)
-                return RequestError.NO_DATA
-            except Life360Error as exc:
-                rate_limited = isinstance(exc, RateLimited)
-                if lrle_resp is LoginRateLimitErrorResp.RETRY and rate_limited:
-                    delay = ceil(exc.retry_after or 0) + 10
-                    _LOGGER.debug(
-                        "%s: rate limited %s: will retry in %i s",
-                        aid,
-                        msg,
-                        delay,
+                done, _ = await asyncio.wait(
+                    [failed_task, request_task], return_when=asyncio.FIRST_COMPLETED
+                )
+                if failed_task in done:
+                    request_task.cancel()
+                    with suppress(asyncio.CancelledError, Life360Error):
+                        await request_task
+                    return RequestError.NO_DATA
+
+                try:
+                    # if aid == "federicktest95@gmail.com":
+                    #     self._requests += 1
+                    #     if self._requests == 1:
+                    #         request_task.cancel()
+                    #         with suppress(BaseException):
+                    #             await request_task
+                    #         raise LoginError("TEST TEST TEST")
+                    result = await request_task
+                    self._set_acct_online(aid, True)
+                    return result
+                except NotModified:
+                    self._set_acct_online(aid, True)
+                    return RequestError.NOT_MODIFIED
+                except LoginError as exc:
+                    if lrle_resp is LoginRateLimitErrorResp.RETRY:
+                        self._set_acct_online(aid, True)
+                        delay = 15 * 60
+                        delay_reason = "login error"
+                        continue
+
+                    treat_as_error = lrle_resp is not LoginRateLimitErrorResp.SILENT
+                    self._set_acct_online(aid, not treat_as_error)
+                    level = logging.ERROR if treat_as_error else logging.DEBUG
+                    _LOGGER.log(level, "%s: login error %s: %s", aid, msg, exc)
+                    if treat_as_error:
+                        self._handle_login_error(aid)
+                    return RequestError.NO_DATA
+                except Life360Error as exc:
+                    rate_limited = isinstance(exc, RateLimited)
+                    if lrle_resp is LoginRateLimitErrorResp.RETRY and rate_limited:
+                        self._set_acct_online(aid, True)
+                        delay = ceil(cast(RateLimited, exc).retry_after or 0) + 10
+                        delay_reason = "rate limited"
+                        continue
+
+                    # TODO: Keep track of errors per aid so we don't flood log???
+                    #       Maybe like DataUpdateCoordinator does it?
+                    treat_as_error = not (
+                        rate_limited and lrle_resp is LoginRateLimitErrorResp.SILENT
                     )
-                    await asyncio.sleep(delay)
-                    continue
-                # TODO: Keep track of errors per aid so we don't flood log???
-                #       Maybe like DataUpdateCoordinator does it?
-                level = (
-                    logging.DEBUG
-                    if rate_limited and lrle_resp is LoginRateLimitErrorResp.SILENT
-                    else logging.ERROR
-                )
-                _LOGGER.log(level, "%s: %s: %s", aid, msg, exc)
-                return RequestError.NO_DATA
+                    self._set_acct_online(aid, not treat_as_error)
+                    level = logging.ERROR if treat_as_error else logging.DEBUG
+                    _LOGGER.log(level, "%s: %s: %s", aid, msg, exc)
+                    return RequestError.NO_DATA
+        finally:
+            if warned:
+                _LOGGER.warning("Done trying to get response from Life360 for %s", aid)
+
+    def _set_acct_online(self, aid: AccountID, online: bool) -> None:
+        """Set account online status and signal clients if it has changed."""
+        if online == (acct := self._acct_data[aid]).online:
+            return
+        acct.online = online
+        async_dispatcher_send(self.hass, SIGNAL_ACCT_STATUS, aid)
 
     def _handle_login_error(self, aid: AccountID) -> None:
         """Handle account login error."""

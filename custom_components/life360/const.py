@@ -52,3 +52,5 @@ OPTIONS = list(DEFAULT_OPTIONS.keys())
 
 DATA_CONFIG_OPTIONS = "config_options"
 DATA_CENTRAL_COORDINATOR = "central_coordinator"
+
+SIGNAL_ACCT_STATUS = "life360_acct_status"
