@@ -132,6 +132,40 @@ class ConfigOptions:
 
 
 @dataclass
+class MemberDetails:
+    """Life360 Member "static" details."""
+
+    # TODO: Remove before beta.
+    # This field should only be None when reading .storage/life360 from earlier versions
+    # that did not store mem_details. The "= None" and type ignore can be removed.
+    name: str = None  # type: ignore[assignment]
+    entity_picture: str | None = None
+
+    @classmethod
+    def from_dict(cls, restored: Mapping[str, Any]) -> Self:
+        """Initialize from a dictionary.
+
+        Raises KeyError if any data is missing.
+        """
+        return cls(
+            restored["name"],
+            restored["entity_picture"],
+        )
+
+    @classmethod
+    def from_server(cls, raw_member: Mapping[str, Any]) -> Self:
+        """Initialize from Member's data from server."""
+        first = raw_member["firstName"]
+        last = raw_member["lastName"]
+        if first and last:
+            name = f"{first} {last}"
+        else:
+            name = first or last or "No Name"
+        entity_picture = raw_member["avatar"]
+        return cls(name, entity_picture)
+
+
+@dataclass
 class LocationDetails:
     """Life360 Member location details."""
 
@@ -210,24 +244,6 @@ class LocationDetails:
 
 
 @dataclass
-class Life360ExtraStoredData(ExtraStoredData):
-    """Life360 extra stored data."""
-
-    loc_details: LocationDetails | None
-
-    def as_dict(self) -> dict[str, Any]:
-        """Return a dict representation of the data."""
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, restored: Mapping[str, Any]) -> Self:
-        """Initialize from a dictionary."""
-        if restored_loc_details := restored["loc_details"]:
-            return cls(LocationDetails.from_dict(restored_loc_details))
-        return cls(None)
-
-
-@dataclass
 class LocationData:
     """Life360 Member location data."""
 
@@ -261,40 +277,6 @@ class LocationData:
         )
 
 
-@dataclass
-class MemberDetails:
-    """Life360 Member "static" details."""
-
-    # TODO: Remove before beta.
-    # This field should only be None when reading .storage/life360 from earlier versions
-    # that did not store mem_details. The "= None" and type ignore can be removed.
-    name: str = None  # type: ignore[assignment]
-    entity_picture: str | None = None
-
-    @classmethod
-    def from_dict(cls, restored: Mapping[str, Any]) -> Self:
-        """Initialize from a dictionary.
-
-        Raises KeyError if any data is missing.
-        """
-        return cls(
-            restored["name"],
-            restored["entity_picture"],
-        )
-
-    @classmethod
-    def from_server(cls, raw_member: Mapping[str, Any]) -> Self:
-        """Initialize from Member's data from server."""
-        first = raw_member["firstName"]
-        last = raw_member["lastName"]
-        if first and last:
-            name = f"{first} {last}"
-        else:
-            name = first or last or "No Name"
-        entity_picture = raw_member["avatar"]
-        return cls(name, entity_picture)
-
-
 class NoLocReason(IntEnum):
     """Reason why Member location data is missing."""
 
@@ -305,7 +287,7 @@ class NoLocReason(IntEnum):
 
 
 @dataclass
-class MemberData:
+class MemberData(ExtraStoredData):
     """Life360 Member data."""
 
     details: MemberDetails

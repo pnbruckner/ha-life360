@@ -42,13 +42,7 @@ from .const import (
     STATE_DRIVING,
 )
 from .coordinator import Life360DataUpdateCoordinator
-from .helpers import (
-    ConfigOptions,
-    Life360ExtraStoredData,
-    LocationData,
-    MemberID,
-    NoLocReason,
-)
+from .helpers import ConfigOptions, MemberData, MemberID, NoLocReason
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -109,7 +103,6 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(process_data))
 
 
-# TODO: Restore state
 class Life360DeviceTracker(
     CoordinatorEntity[Life360DataUpdateCoordinator], TrackerEntity, RestoreEntity
 ):
@@ -311,11 +304,9 @@ class Life360DeviceTracker(
         return attrs_unknown | {ATTR_REASON: self._data.err_msg}
 
     @property
-    def extra_restore_state_data(self) -> Life360ExtraStoredData:
+    def extra_restore_state_data(self) -> MemberData:
         """Return Life360 specific state data to be restored."""
-        if not self._data.loc:
-            return Life360ExtraStoredData(None)
-        return Life360ExtraStoredData(self._data.loc.details)
+        return self._data
 
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""
@@ -324,18 +315,27 @@ class Life360DeviceTracker(
         # Restore state if possible.
         if not (last_extra_data := await self.async_get_last_extra_data()):
             return
-        self._prev_data = deepcopy(self._data)
-        prev_loc_details = Life360ExtraStoredData.from_dict(
-            last_extra_data.as_dict()
-        ).loc_details
-        if prev_loc_details:
-            self._prev_data.loc = LocationData(prev_loc_details)
-            # Address data can be very old. Throw it away so it's not combined with
-            # current address data.
-            self._prev_data.loc.details.address = None
-            self._process_update()
-        else:
-            self._prev_data.loc = None
+        restored = last_extra_data.as_dict()
+
+        # TODO: Remove before beta.
+        # Previous version stored only location details under "loc_details" key.
+        # If that is what is read back, don't use it.
+        if "loc_details" in restored:
+            return
+
+        last_md = MemberData.from_dict(restored)
+        # Address data can be very old. Throw it away so it's not combined with
+        # current address data.
+        if last_md.loc:
+            last_md.loc.details.address = None
+        # If no data was actually available for Member (and MemberData was created just
+        # based on MemberDetails, either from .storage/life360, or from initial query of
+        # Circle Members), then replace current data with restored data.
+        if not self._data.loc and self._data.loc_missing is NoLocReason.NOT_SET:
+            self._prev_data = self._data = last_md
+            return
+        self._prev_data = last_md
+        self._process_update()
 
     @callback
     def _handle_coordinator_update(self, config_changed: bool = False) -> None:
