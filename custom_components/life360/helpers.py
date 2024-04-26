@@ -311,7 +311,7 @@ class MemberData(ExtraStoredData):
         else:
             loc = None
         return cls(
-            MemberDetails.from_dict(restored),
+            MemberDetails.from_dict(restored["details"]),
             loc,
             NoLocReason(restored["loc_missing"]),
             restored["err_msg"],

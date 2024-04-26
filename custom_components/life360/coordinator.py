@@ -562,9 +562,13 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
 
         for aid in old_acct_ids & new_acct_ids:
             api = self._acct_data[aid].api
+            api.authorization = new_options.accounts[aid].authorization
+            api.name = (
+                aid
+                if new_options.verbosity >= 3
+                else f"Account {list(self._acct_data).index(aid) + 1}"
+            )
             api.verbosity = new_options.verbosity
-            # TODO: Change API to make authorization attr directly accessible.
-            api._authorization = new_options.accounts[aid].authorization
 
         if old_accts == new_accts:
             return
@@ -613,15 +617,17 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
 
     def _create_acct_data(self, aids: Iterable[AccountID]) -> None:
         """Create data needed for each specified Life360 account."""
-        for aid in aids:
+        for idx, aid in enumerate(aids):
             acct = self._options.accounts[aid]
             if not acct.enabled:
                 continue
             session = async_create_clientsession(self.hass, timeout=COMM_TIMEOUT)
+            name = aid if self._options.verbosity >= 3 else f"Account {idx + 1}"
             api = helpers.Life360(
                 session,
                 COMM_MAX_RETRIES,
                 acct.authorization,
+                name=name,
                 verbosity=self._options.verbosity,
             )
             failed = asyncio.Event()

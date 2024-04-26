@@ -309,8 +309,9 @@ class Life360Flow(FlowHandler, ABC):
         if self._enabled:
             session = async_create_clientsession(self.hass, timeout=COMM_TIMEOUT)
             try:
+                name = self._username if self._opts.verbosity >= 3 else None
                 api = helpers.Life360(
-                    session, COMM_MAX_RETRIES, verbosity=self._opts.verbosity
+                    session, COMM_MAX_RETRIES, name=name, verbosity=self._opts.verbosity
                 )
                 authorization = await api.login_by_username(
                     self._username, self._password
