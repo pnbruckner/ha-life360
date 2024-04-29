@@ -44,9 +44,11 @@ from .const import (
     COMM_MAX_RETRIES,
     COMM_TIMEOUT,
     CONF_ACCOUNTS,
+    CONF_AUTHORIZATION,
     CONF_DRIVING_SPEED,
     CONF_MAX_GPS_ACCURACY,
     CONF_SHOW_DRIVING,
+    CONF_TOKEN_TYPE,
     CONF_VERBOSITY,
     DOMAIN,
 )
@@ -63,7 +65,8 @@ class Life360Flow(FlowHandler, ABC):
 
     _aid: AccountID | None
     _username: str | None
-    _password: str
+    _authorization: str | None
+    _password: str | None
     _enabled: bool
     _authorized_aids: set[AccountID]
 
@@ -81,6 +84,11 @@ class Life360Flow(FlowHandler, ABC):
         self._authorized_aids = set()
         return self._opts.accounts
 
+    @property
+    def _aids(self) -> list[AccountID]:
+        """Return identifiers for current accounts."""
+        return list(self._accts)
+
     @cached_property
     def _speed_uom(self) -> str:
         """Return speed unit_of_measurement."""
@@ -88,16 +96,11 @@ class Life360Flow(FlowHandler, ABC):
             return UnitOfSpeed.KILOMETERS_PER_HOUR
         return UnitOfSpeed.MILES_PER_HOUR
 
-    @property
-    def _aids(self) -> list[AccountID]:
-        """Return identifiers for current accounts."""
-        return list(self._accts)
-
     def _add_or_update_acct(
-        self, aid: AccountID, password: str, authorization: str, enabled: bool
+        self, aid: AccountID, authorization: str, password: str | None, enabled: bool
     ) -> None:
         """Add or update an account."""
-        self._accts[aid] = Account(password, authorization, enabled)
+        self._accts[aid] = Account(authorization, password, enabled)
         if enabled:
             self._authorized_aids.add(aid)
 
@@ -195,9 +198,9 @@ class Life360Flow(FlowHandler, ABC):
 
     async def async_step_add_acct(self, _: dict[str, Any] | None = None) -> FlowResult:
         """Add an account."""
-        self._aid = self._username = None
+        self._aid = self._username = self._authorization = self._password = None
         self._enabled = True
-        return await self.async_step_acct()
+        return await self.async_step_acct_type_menu()
 
     async def async_step_mod_acct_sel(
         self, user_input: dict[str, Any] | None = None
@@ -209,9 +212,10 @@ class Life360Flow(FlowHandler, ABC):
             else:
                 aid = cast(AccountID, user_input[CONF_ACCOUNTS])
             self._aid = self._username = aid
+            self._authorization = self._accts[aid].authorization
             self._password = self._accts[aid].password
             self._enabled = self._accts[aid].enabled
-            return await self.async_step_acct()
+            return await self.async_step_acct_type_menu()
 
         return self.async_show_form(
             step_id="mod_acct_sel",
@@ -219,28 +223,41 @@ class Life360Flow(FlowHandler, ABC):
             last_step=False,
         )
 
-    async def async_step_acct(
+    async def async_step_acct_type_menu(
+        self, _: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Select account type."""
+        return self.async_show_menu(
+            step_id="acct_type_menu",
+            menu_options=["acct_username_password", "acct_authorization"],
+        )
+
+    async def async_step_acct_username_password(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Enter account credentials."""
+        """Enter account username & password."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
             self._username = cast(str, user_input[CONF_USERNAME])
-            self._password = cast(str, user_input[CONF_PASSWORD])
-            self._enabled = cast(bool, user_input[CONF_ENABLED])
-            try:
-                await self._verify_and_save_acct()
-            except vol.EmailInvalid:
-                errors[CONF_USERNAME] = "invalid_email"
-            except LoginError:
-                errors["base"] = "invalid_auth"
-            except CommError:
-                errors["base"] = "cannot_connect"
-            except Life360Error:
-                errors["base"] = "unknown"
+            if self._username != self._aid and self._username in self._aids:
+                errors[CONF_USERNAME] = "email_not_unique"
             else:
-                return await self.async_step_acct_menu()
+                self._authorization = None
+                self._password = cast(str, user_input[CONF_PASSWORD])
+                self._enabled = cast(bool, user_input[CONF_ENABLED])
+                try:
+                    await self._verify_and_save_acct()
+                except vol.EmailInvalid:
+                    errors[CONF_USERNAME] = "invalid_email"
+                except LoginError:
+                    errors["base"] = "invalid_auth"
+                except CommError:
+                    errors["base"] = "cannot_connect"
+                except Life360Error:
+                    errors["base"] = "unknown"
+                else:
+                    return await self.async_step_acct_menu()
 
         data_schema = vol.Schema(
             {
@@ -265,7 +282,80 @@ class Life360Flow(FlowHandler, ABC):
             data_schema, {CONF_ENABLED: self._enabled}
         )
         return self.async_show_form(
-            step_id="acct",
+            step_id="acct_username_password",
+            data_schema=data_schema,
+            errors=errors,
+            description_placeholders={"action": "Modify" if self._aid else "Add"},
+            last_step=False,
+        )
+
+    async def async_step_acct_authorization(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Enter account username & authorization."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            self._username = cast(str, user_input[CONF_USERNAME])
+            token_type = cast(str, user_input[CONF_TOKEN_TYPE]).strip()
+            token = cast(str, user_input[CONF_AUTHORIZATION]).strip()
+            if self._username != self._aid and self._username in self._aids:
+                errors[CONF_USERNAME] = "email_not_unique"
+            if token_type and token:
+                self._authorization = f"{token_type} {token}"
+            else:
+                if not token_type:
+                    errors[CONF_TOKEN_TYPE] = "must_not_be_empty"
+                if not token:
+                    errors[CONF_AUTHORIZATION] = "must_not_be_empty"
+            if not errors:
+                self._password = None
+                self._enabled = cast(bool, user_input[CONF_ENABLED])
+                try:
+                    await self._verify_and_save_acct()
+                except vol.EmailInvalid:
+                    errors[CONF_USERNAME] = "invalid_email"
+                except LoginError:
+                    errors["base"] = "invalid_auth"
+                except CommError:
+                    errors["base"] = "cannot_connect"
+                except Life360Error:
+                    errors["base"] = "unknown"
+                else:
+                    return await self.async_step_acct_menu()
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_USERNAME): TextSelector(
+                    TextSelectorConfig(type=TextSelectorType.EMAIL)
+                ),
+                vol.Required(CONF_TOKEN_TYPE): TextSelector(),
+                vol.Required(CONF_AUTHORIZATION): TextSelector(),
+                vol.Required(CONF_ENABLED): BooleanSelector(),
+            }
+        )
+        if self._username:
+            data_schema = self.add_suggested_values_to_schema(
+                data_schema, {CONF_USERNAME: self._username}
+            )
+        if self._authorization:
+            token_type, token = self._authorization.split()
+            data_schema = self.add_suggested_values_to_schema(
+                data_schema,
+                {
+                    CONF_TOKEN_TYPE: token_type,
+                    CONF_AUTHORIZATION: token,
+                },
+            )
+        else:
+            data_schema = self.add_suggested_values_to_schema(
+                data_schema, {CONF_TOKEN_TYPE: "Bearer"}
+            )
+        data_schema = self.add_suggested_values_to_schema(
+            data_schema, {CONF_ENABLED: self._enabled}
+        )
+        return self.async_show_form(
+            step_id="acct_authorization",
             data_schema=data_schema,
             errors=errors,
             description_placeholders={"action": "Modify" if self._aid else "Add"},
@@ -305,19 +395,31 @@ class Life360Flow(FlowHandler, ABC):
         # Validate email address.
         self._username = cast(str, vol.Email()(self._username))
 
-        # Check that credentials work by getting new authorization.
+        # Check that credentials work by getting new authorization & testing it.
         if self._enabled:
             session = async_create_clientsession(self.hass, timeout=COMM_TIMEOUT)
             try:
                 name = self._username if self._opts.verbosity >= 3 else None
                 api = helpers.Life360(
-                    session, COMM_MAX_RETRIES, name=name, verbosity=self._opts.verbosity
+                    session,
+                    COMM_MAX_RETRIES,
+                    authorization=self._authorization,
+                    name=name,
+                    verbosity=self._opts.verbosity,
                 )
-                authorization = await api.login_by_username(
-                    self._username, self._password
-                )
+                if self._password is not None:
+                    authorization = await api.login_by_username(
+                        self._username, self._password
+                    )
+                else:
+                    assert self._authorization is not None
+                    authorization = self._authorization
+                # Check that authorization works.
+                await api.get_me()
             finally:
                 session.detach()
+        elif self._authorization is not None:
+            authorization = self._authorization
         else:
             # No point in keeping old authorization, if there was one, because once
             # account is re-enabled, a new authorization will be obtained.
@@ -326,7 +428,7 @@ class Life360Flow(FlowHandler, ABC):
         if self._aid and self._username != self._aid:
             self._delete_acct(self._aid)
         self._add_or_update_acct(
-            AccountID(self._username), self._password, authorization, self._enabled
+            AccountID(self._username), authorization, self._password, self._enabled
         )
 
     @abstractmethod

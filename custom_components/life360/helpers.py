@@ -50,8 +50,8 @@ MemberID = NewType("MemberID", str)
 class Account:
     """Account info."""
 
-    password: str
     authorization: str
+    password: str | None = None
     enabled: bool = True
 
     @classmethod
@@ -60,7 +60,7 @@ class Account:
 
         Raises KeyError if any data is missing.
         """
-        return cls(data[CONF_PASSWORD], data[CONF_AUTHORIZATION], data[CONF_ENABLED])
+        return cls(data[CONF_AUTHORIZATION], data[CONF_PASSWORD], data[CONF_ENABLED])
 
 
 @dataclass
@@ -96,7 +96,7 @@ class ConfigOptions:
     def _add_account(self, data: Mapping[str, Any], enabled: bool = True) -> None:
         """Add account."""
         self.accounts[data[CONF_USERNAME]] = Account(
-            data[CONF_PASSWORD], data[CONF_AUTHORIZATION], enabled
+            data[CONF_AUTHORIZATION], data[CONF_PASSWORD], enabled
         )
 
     def _merge_options(self, data: Mapping[str, Any], metric: bool) -> None:
