@@ -7,7 +7,7 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/pnbruckner/ha-life360/issues",
   "loggers": ["life360"],
-  "requirements": ["life360==7.0.0b5"],
+  "requirements": ["life360==7.0.0b6"],
   "single_config_entry": true,
-  "version": "0.3.10"
+  "version": "0.4.0.dev0"
 }

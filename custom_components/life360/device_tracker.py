@@ -337,6 +337,19 @@ class Life360DeviceTracker(
         self._prev_data = last_md
         self._process_update()
 
+    async def async_update(self) -> None:
+        """Update the entity.
+
+        Only used by the generic entity update service.
+        Send request to Member to update their location.
+        Typically causes the Member to update every 5 seconds for one minute.
+        """
+        # Ignore manual update requests if the entity is disabled
+        if not self.enabled:
+            return
+        _LOGGER.debug("Sending location update request for %s", self)
+        await self.coordinator.update_location(self._mid)
+
     @callback
     def _handle_coordinator_update(self, config_changed: bool = False) -> None:
         """Handle updated data from the coordinator."""

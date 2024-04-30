@@ -39,11 +39,11 @@
                 }
             },
             "acct_type_menu": {
-                "title": "Account Type",
-                "description": "Select account type.",
+                "title": "Authorization Method",
+                "description": "Select authorization method.",
                 "menu_options": {
                     "acct_username_password": "Username & password",
-                    "acct_authorization": "Username and authorization string"
+                    "acct_authorization": "Access type & token"
                 }
             },
             "acct_username_password": {
@@ -56,9 +56,9 @@
             },
             "acct_authorization": {
                 "title": "{action} account",
-                "description": "Go to https://app.life360.com/login, open browser's \"Developer tools\", go to Network tab & enable recording. Complete signin processor. Look for \"token\" transer. From response tab, copy access_type & access_token and enter below.",
+                "description": "Go to https://app.life360.com/login, open browser's \"Developer tools\", go to Network tab & enable recording. Complete signin processor. In Network tab, look for \"token\" transer. From response tab, copy access_type & access_token values and enter below.",
                 "data": {
-                    "username": "Email address",
+                    "username": "Account identifier (e.g., phone number, email address)",
                     "token_type": "Access type",
                     "authorization": "Access token",
                     "enabled": "Enabled"
@@ -123,11 +123,11 @@
                 }
             },
             "acct_type_menu": {
-                "title": "Account Type",
-                "description": "Select account type.",
+                "title": "Authorization Method",
+                "description": "Select authorization method.",
                 "menu_options": {
                     "acct_username_password": "Username & password",
-                    "acct_authorization": "Username and authorization string"
+                    "acct_authorization": "Access type & token"
                 }
             },
             "acct_username_password": {
@@ -140,9 +140,9 @@
             },
             "acct_authorization": {
                 "title": "{action} account",
-                "description": "Go to https://app.life360.com/login, open browser's \"Developer tools\", go to Network tab & enable recording. Complete signin processor. Look for \"token\" transer. From response tab, copy access_type & access_token and enter below.",
+                "description": "Go to https://app.life360.com/login, open browser's \"Developer tools\", go to Network tab & enable recording. Complete signin processor. In Network tab, look for \"token\" transer. From response tab, copy access_type & access_token values and enter below.",
                 "data": {
-                    "username": "Email address",
+                    "username": "Account identifier (e.g., phone number, email address)",
                     "token_type": "Access type",
                     "authorization": "Access token",
                     "enabled": "Enabled"

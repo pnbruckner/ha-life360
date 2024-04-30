@@ -137,6 +137,33 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
             return True
         return self._acct_data[aid].online
 
+    async def update_location(self, mid: MemberID) -> None:
+        """Request Member's locaiton be updated."""
+        if not (md := self._cm_data.mem_details.get(mid)):
+            _LOGGER.error(
+                "Could not update location of Member w/ ID %s: not known", mid
+            )
+            return
+
+        for cid in self._cm_data.mem_circles[mid]:
+            circle_data = self._cm_data.circles[cid]
+            for aid in circle_data.aids:
+                api = self._acct_data[aid].api
+                result = await self._request(
+                    aid,
+                    api.request_circle_member_location_update,
+                    cid,
+                    mid,
+                    msg=(
+                        f"while requesting location update for {md.name} "
+                        f"via {circle_data.name} Circle"
+                    ),
+                )
+                if not isinstance(result, RequestError):
+                    return
+
+        _LOGGER.error("Could not update location of %s", md.name)
+
     # TODO: Remove this once implementation is stable.
     def _validate_cm_data(self) -> None:
         """Validate CircleMemberData is consistent."""
