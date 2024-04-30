@@ -214,8 +214,6 @@ class Life360DeviceTracker(
             return None
         return self._data.loc.details.longitude
 
-    # TODO: When driving is True, periodically send update requests to server for
-    #       Member, maybe once a minute??? But only if enabled by config option.
     @property
     def driving(self) -> bool:
         """Return if driving."""
