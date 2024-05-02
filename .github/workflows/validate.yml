@@ -49,7 +49,7 @@ jobs:
         # 0.13.42 -> HA 2023.7.0
         # 0.13.49 -> HA 2023.8.0
         # 0.13.109 -> HA 2024.3.3
-        # 0.13.113 -> HA 2024.4.2
+        # 0.13.115 -> HA 2024.4.4
         include:
           - hass-test-cc-version: "0.13.49"
             python-version: "3.11"
@@ -57,7 +57,7 @@ jobs:
             python-version: "3.11"
           - hass-test-cc-version: "0.13.109"
             python-version: "3.12"
-          - hass-test-cc-version: "0.13.113"
+          - hass-test-cc-version: "0.13.115"
             python-version: "3.12"
     steps:
       - name: 📥 Checkout the repository
