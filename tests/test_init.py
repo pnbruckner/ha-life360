@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Generator, Iterable
 from itertools import chain, repeat
 from math import ceil
+import re
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -328,11 +329,17 @@ async def test_uknown_config_version(
         assert not await async_setup_component(hass, DOMAIN, {})
         await hass.async_block_till_done()
 
-    for levelname, message in (
-        ("ERROR", "Unsupported configuration entry found"),
-        ("ERROR", "Setup failed for custom integration 'life360'"),
+    for levelname, pat in (
+        ("ERROR", r"Unsupported configuration entry found: [^,]+, version: 3(.1)?"),
+        (
+            "ERROR",
+            (
+                r"Setup failed for custom integration '?life360'?: "
+                r"Integration failed to initialize\."
+            ),
+        ),
     ):
         assert any(
-            rec.levelname == levelname and message in rec.message
+            rec.levelname == levelname and re.fullmatch(pat, rec.message)
             for rec in caplog.get_records("call")
         )
