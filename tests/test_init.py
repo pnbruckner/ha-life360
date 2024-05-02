@@ -1,11 +1,14 @@
 """Test Life360 __init__.py module."""
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Generator, Iterable
+from itertools import chain, repeat
 from math import ceil
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 from custom_components.life360.const import DOMAIN
+from life360 import LoginError
 import pytest
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -20,12 +23,84 @@ from homeassistant.setup import async_setup_component
 from homeassistant.util import uuid as uuid_util
 from homeassistant.util.unit_conversion import SpeedConverter
 
+from .conftest import Life360API_Data
+
+# ========== Fixtures ==================================================================
+
+
+@pytest.fixture
+def setup_entry_mock() -> Generator[AsyncMock, None, None]:
+    """Mock async_setup_entry."""
+    with patch("custom_components.life360.async_setup_entry", autospec=True) as mock:
+        mock.return_value = True
+        yield mock
+
+
+# Set scope to module so fixture still remains in effect during teardown where entry
+# will be unloaded if not unloaded during test.
+@pytest.fixture(scope="module")
+def unload_entry_mock() -> Generator[AsyncMock, None, None]:
+    """Mock async_unload_entry."""
+    with patch("custom_components.life360.async_unload_entry", autospec=True) as mock:
+        mock.return_value = True
+        yield mock
+
+
+# ========== async_setup Tests: Migration ==============================================
+
+
+circles = [{"id": "cid1", "name": "Circle 1"}, {"id": "cid2", "name": "Circle 2"}]
+member1 = {
+    "id": "mid1",
+    "firstName": "First1",
+    "lastName": "Last1",
+    "avatar": None,
+    "features": {"shareLocation": 0},
+    "loc": None,
+}
+member2 = {
+    "id": "mid2",
+    "firstName": "First2",
+    "lastName": "Last2",
+    "avatar": None,
+    "features": {"shareLocation": 0},
+    "loc": None,
+}
+circle_members = {"cid1": [member1], "cid2": [member2]}
+members = {"cid1": {"mid1": member1}, "cid2": {"mid2": member2}}
+
+
+def get_circle_members(
+    cid: str, *, raise_not_modified: bool = False
+) -> list[dict[str, Any]]:
+    """Get details for Members in given Circle."""
+    return circle_members[cid]
+
+
+def get_circle_member(
+    cid: str, mid: str, *, raise_not_modified: bool = False
+) -> dict[str, Any]:
+    """Get details for Member as seen from given Circle."""
+    return members[cid][mid]
+
+
+def api_data() -> Life360API_Data:
+    """Generate Life360 API data."""
+    return {
+        "Account 1": {
+            "get_circles": chain(repeat(LoginError("TEST"), 1), repeat(circles)),
+            "get_circle_members": get_circle_members,
+            "get_circle_member": get_circle_member,
+        },
+    }
+
 
 # fmt: off
 @pytest.mark.parametrize(
-    ("metric", "option_set"),
+    ("MockLife360", "metric", "option_set"),
     [
         (
+            api_data(),
             False,
             (
                 # driving_speed, max_gps_accuracy, driving
@@ -33,18 +108,21 @@ from homeassistant.util.unit_conversion import SpeedConverter
             ),
         ),
         (
+            api_data(),
             False,
             (
                 (10.0, 50.0, True),
             ),
         ),
         (
+            api_data(),
             True,
             (
                 (10.0, 50.0, True),
             ),
         ),
         (
+            api_data(),
             False,
             (
                 (None, None, False),
@@ -52,6 +130,7 @@ from homeassistant.util.unit_conversion import SpeedConverter
             ),
         ),
         (
+            api_data(),
             False,
             (
                 (None, None, False),
@@ -60,12 +139,15 @@ from homeassistant.util.unit_conversion import SpeedConverter
             ),
         ),
     ],
+    indirect=["MockLife360"],
 )
 # fmt: on
 async def test_migration(
     hass: HomeAssistant,
-    hass_storage: dict[str, Any],
     entity_registry: er.EntityRegistry,
+    caplog: pytest.LogCaptureFixture,
+    setup_entry_mock: AsyncMock,
+    unload_entry_mock: AsyncMock,
     metric: bool,
     option_set: Iterable[tuple[float, float, bool]],
 ) -> None:
@@ -151,6 +233,8 @@ async def test_migration(
     v2_entry = entries[0]
     assert v2_entry.version == 2
     assert v2_entry.entry_id not in v1_entry_ids
+    # Check that v2 config entry got setup.
+    setup_entry_mock.assert_called_once_with(hass, v2_entry)
 
     # Check v2 config entry options.
     if comb_ds is not None and metric:
@@ -172,3 +256,10 @@ async def test_migration(
         entity = entity_registry.async_get(entity_id)
         assert entity
         assert entity.config_entry_id == v2_entry.entry_id
+
+    # Check that a warning message was created noting the migration.
+    assert any(
+        rec.levelname == "WARNING"
+        and "Migrating Life360 integration entries from version 1 to 2" in rec.message
+        for rec in caplog.get_records("call")
+    )
