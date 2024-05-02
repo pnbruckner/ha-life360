@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import asdict
 from functools import partial
 import logging
@@ -37,8 +38,29 @@ def _migrate_entity(
     ent_reg.async_update_entity(entity.entity_id, **kwargs)
 
 
+async def _finish_migration(
+    hass: HomeAssistant,
+    v2_entry: ConfigEntry,
+    entities: Iterable[er.RegistryEntry],
+    entries: Iterable[ConfigEntry],
+) -> None:
+    """Finish migration."""
+    ent_reg = er.async_get(hass)
+
+    # Add new v2 config entry.
+    await hass.config_entries.async_add(v2_entry)
+
+    # Migrate entity registry entries to new config entry.
+    for entity in entities:
+        _migrate_entity(ent_reg, entity, v2_entry.entry_id)
+
+    # Remove old v1 entries.
+    for entry in entries:
+        await hass.config_entries.async_remove(entry.entry_id)
+
+
 async def _migrate_config_entries(
-    hass: HomeAssistant, entries: list[ConfigEntry]
+    hass: HomeAssistant, entries: Iterable[ConfigEntry]
 ) -> None:
     """Migrate config entries from version 1 -> 2."""
     ent_reg = er.async_get(hass)
@@ -79,19 +101,6 @@ async def _migrate_config_entries(
     except TypeError:
         v2_entry = create_config_entry()
 
-    async def finish_migration(v2_entry: ConfigEntry) -> None:
-        """Finish migration."""
-        # Add new v2 config entry.
-        await hass.config_entries.async_add(v2_entry)
-
-        # Migrate entity registry entries to new config entry.
-        for entity in entities:
-            _migrate_entity(ent_reg, entity, v2_entry.entry_id)
-
-        # Remove old v1 entries.
-        for entry in entries:
-            await hass.config_entries.async_remove(entry.entry_id)
-
     # Cannot add a new config entry here since we're called from async_setup, which is
     # called from setup.async_setup_component, which is at the point where our domain
     # has not yet been added to hass.config.components (since async_setup hasn't
@@ -102,7 +111,7 @@ async def _migrate_config_entries(
     # start an infinite loop.
     # So, finish the remaining operations, including adding the new config entry, in a
     # separate task.
-    hass.async_create_task(finish_migration(v2_entry))
+    hass.async_create_task(_finish_migration(hass, v2_entry, entities, entries))
 
 
 async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
@@ -180,5 +189,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Remove config entry."""
+    # Don't delete store when migrating from version 1 config entry.
+    if entry.version < 2:
+        return True
     await Life360Store(hass).remove()
     return True

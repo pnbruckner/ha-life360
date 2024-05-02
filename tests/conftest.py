@@ -43,8 +43,8 @@ Life360API_Data = Mapping[str | None, Mapping[str, Life360API_SideEffect]]
 def MockLife360(request: pytest.FixtureRequest) -> Generator[MagicMock, None, None]:
     """Mock Life360."""
 
-    if request.param:
-        api_data = cast(Life360API_Data, request.param)
+    if param := getattr(request, "param", None):
+        api_data = cast(Life360API_Data, param)
     else:
         api_data = cast(Life360API_Data, {})
 

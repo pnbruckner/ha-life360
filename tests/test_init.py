@@ -224,7 +224,7 @@ async def test_migration(
         )
 
     with assert_setup_component(0, DOMAIN):
-        await async_setup_component(hass, DOMAIN, {})
+        assert await async_setup_component(hass, DOMAIN, {})
         await hass.async_block_till_done()
 
     # Check that v2 config entry was created and v1 config entries are gone.
@@ -263,3 +263,76 @@ async def test_migration(
         and "Migrating Life360 integration entries from version 1 to 2" in rec.message
         for rec in caplog.get_records("call")
     )
+
+
+@pytest.mark.parametrize("entity_migrated", [False, True])
+async def test_aborted_migration(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    caplog: pytest.LogCaptureFixture,
+    setup_entry_mock: AsyncMock,
+    unload_entry_mock: AsyncMock,
+    entity_migrated: bool,
+) -> None:
+    """Test aborted & restarted config entry migration."""
+    # Set up partial migration scenario with v2 entry created, but v1 entry still
+    # still present and entity possibly still associated with v1 entry.
+    v1_entry = MockConfigEntry(domain=DOMAIN)
+    v1_entry.add_to_hass(hass)
+    v2_entry = MockConfigEntry(domain=DOMAIN, version=2)
+    v2_entry.add_to_hass(hass)
+    entity_id = entity_registry.async_get_or_create(
+        "binary_sensor",
+        DOMAIN,
+        "user@email.com",
+        config_entry=v2_entry if entity_migrated else v1_entry,
+        original_device_class=BinarySensorDeviceClass.CONNECTIVITY,
+    ).entity_id
+
+    with assert_setup_component(0, DOMAIN):
+        assert await async_setup_component(hass, DOMAIN, {})
+        await hass.async_block_till_done()
+
+    # Check that v1 config entry is gone.
+    entries = hass.config_entries.async_entries(DOMAIN)
+    assert len(entries) == 1
+    assert entries[0] is v2_entry
+    # Check that v2 config entry got setup.
+    setup_entry_mock.assert_called_once_with(hass, v2_entry)
+
+    # Check that entity is associated with v2 config entry.
+    entity = entity_registry.async_get(entity_id)
+    assert entity
+    assert entity.config_entry_id == v2_entry.entry_id
+
+    # Check that a warning message was NOT created noting the migration.
+    assert not any(
+        rec.levelname == "WARNING"
+        and "Migrating Life360 integration entries from version 1 to 2" in rec.message
+        for rec in caplog.get_records("call")
+    )
+
+
+async def test_uknown_config_version(
+    hass: HomeAssistant,
+    caplog: pytest.LogCaptureFixture,
+    setup_entry_mock: AsyncMock,
+    unload_entry_mock: AsyncMock,
+) -> None:
+    """Test with unknown config entry version (i.e., downgrading)."""
+
+    entry = MockConfigEntry(domain=DOMAIN, version=3)
+    entry.add_to_hass(hass)
+
+    with assert_setup_component(0, DOMAIN):
+        assert not await async_setup_component(hass, DOMAIN, {})
+        await hass.async_block_till_done()
+
+    for levelname, message in (
+        ("ERROR", "Unsupported configuration entry found"),
+        ("ERROR", "Setup failed for custom integration 'life360'"),
+    ):
+        assert any(
+            rec.levelname == levelname and message in rec.message
+            for rec in caplog.get_records("call")
+        )
