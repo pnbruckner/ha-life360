@@ -10,6 +10,7 @@ ATTRIBUTION = "Data provided by life360.com"
 CIRCLE_UPDATE_INTERVAL = timedelta(hours=1)
 COMM_MAX_RETRIES = 4
 COMM_TIMEOUT = ClientTimeout(sock_connect=15, total=60)
+LOGIN_ERROR_RETRY_DELAY = 15 * 60
 SPEED_FACTOR_MPH = 2.25
 SPEED_DIGITS = 1
 UPDATE_INTERVAL = timedelta(seconds=5)

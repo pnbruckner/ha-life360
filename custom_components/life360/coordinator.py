@@ -32,6 +32,7 @@ from .const import (
     COMM_MAX_RETRIES,
     COMM_TIMEOUT,
     DOMAIN,
+    LOGIN_ERROR_RETRY_DELAY,
     SIGNAL_ACCT_STATUS,
     UPDATE_INTERVAL,
 )
@@ -179,7 +180,6 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
 
     async def _do_update_data(self) -> Members:
         """Fetch the latest data from the source."""
-        # TODO: How to handle errors, especially per aid/api???
         result = Members()
 
         if self._first_refresh:
@@ -516,50 +516,58 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
                     #             await request_task
                     #         raise LoginError("TEST TEST TEST")
                     result = await request_task
-                    self._set_acct_online(aid, True)
+                    self._set_acct_exc(aid)
                     return result
                 except NotModified:
-                    self._set_acct_online(aid, True)
+                    self._set_acct_exc(aid)
                     return RequestError.NOT_MODIFIED
                 except LoginError as exc:
                     if lrle_resp is LoginRateLimitErrorResp.RETRY:
-                        self._set_acct_online(aid, True)
-                        delay = 15 * 60
+                        self._set_acct_exc(aid)
+                        delay = LOGIN_ERROR_RETRY_DELAY
                         delay_reason = "login error"
                         continue
 
                     treat_as_error = lrle_resp is not LoginRateLimitErrorResp.SILENT
-                    self._set_acct_online(aid, not treat_as_error)
-                    level = logging.ERROR if treat_as_error else logging.DEBUG
-                    _LOGGER.log(level, "%s: login error %s: %s", aid, msg, exc)
+                    self._set_acct_exc(aid, not treat_as_error, msg, exc)
                     if treat_as_error:
                         self._handle_login_error(aid)
                     return RequestError.NO_DATA
                 except Life360Error as exc:
                     rate_limited = isinstance(exc, RateLimited)
                     if lrle_resp is LoginRateLimitErrorResp.RETRY and rate_limited:
-                        self._set_acct_online(aid, True)
+                        self._set_acct_exc(aid)
                         delay = ceil(cast(RateLimited, exc).retry_after or 0) + 10
                         delay_reason = "rate limited"
                         continue
 
-                    # TODO: Keep track of errors per aid so we don't flood log???
-                    #       Maybe like DataUpdateCoordinator does it?
                     treat_as_error = not (
                         rate_limited and lrle_resp is LoginRateLimitErrorResp.SILENT
                     )
-                    self._set_acct_online(aid, not treat_as_error)
-                    level = logging.ERROR if treat_as_error else logging.DEBUG
-                    _LOGGER.log(level, "%s: %s: %s", aid, msg, exc)
+                    self._set_acct_exc(aid, not treat_as_error, msg, exc)
                     return RequestError.NO_DATA
         finally:
             if warned:
                 _LOGGER.warning("Done trying to get response from Life360 for %s", aid)
 
-    def _set_acct_online(self, aid: AccountID, online: bool) -> None:
-        """Set account online status and signal clients if it has changed."""
-        if online == (acct := self._acct_data[aid]).online:
+    def _set_acct_exc(
+        self,
+        aid: AccountID,
+        online: bool = True,
+        msg: str = "",
+        exc: Exception | None = None,
+    ) -> None:
+        """Set account exception status and signal clients if it has changed."""
+        acct = self._acct_data[aid]
+        if exc is not None:
+            level = logging.ERROR if not online and acct.online else logging.DEBUG
+            _LOGGER.log(level, "%s: %s: %s", aid, msg, exc)
+
+        if online == acct.online:
             return
+
+        if online and not acct.online:
+            _LOGGER.error("%s: Fetching data recovered", aid)
         acct.online = online
         async_dispatcher_send(self.hass, SIGNAL_ACCT_STATUS, aid)
 
