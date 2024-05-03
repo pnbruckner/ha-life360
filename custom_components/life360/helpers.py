@@ -135,10 +135,7 @@ class ConfigOptions:
 class MemberDetails:
     """Life360 Member "static" details."""
 
-    # TODO: Remove before beta.
-    # This field should only be None when reading .storage/life360 from earlier versions
-    # that did not store mem_details. The "= None" and type ignore can be removed.
-    name: str = None  # type: ignore[assignment]
+    name: str
     entity_picture: str | None = None
 
     @classmethod
@@ -369,16 +366,7 @@ class CircleData:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Self:
         """Initialize from a dictionary."""
-        # TODO: Remove before beta.
-        # Originally the account identifiers were stored under "usernames". Now it's
-        # "aids" (account IDs) since eventually hope to add login by phone number, and
-        # the account ID will then be a combination of country code & national number.
-        # Should drop the try..except.
-        try:
-            aids = data["aids"]
-        except KeyError:
-            aids = data["usernames"]
-        return cls(data["name"], set(aids), set(data["mids"]))
+        return cls(data["name"], set(data["aids"]), set(data["mids"]))
 
 
 @dataclass
@@ -399,18 +387,10 @@ class StoredData:
             cid: CircleData.from_dict(circle_data)
             for cid, circle_data in data["circles"].items()
         }
-        # TODO: Remove before beta.
-        # "mem_details" was not originally stored. Drop the try.
-        try:
-            mem_details = {
-                mid: MemberDetails.from_dict(mem_data)
-                for mid, mem_data in data["mem_details"].items()
-            }
-        except KeyError:
-            mem_details = {}
-            for circle_data in circles.values():
-                for mid in circle_data.mids:
-                    mem_details.setdefault(mid, MemberDetails())
+        mem_details = {
+            mid: MemberDetails.from_dict(mem_data)
+            for mid, mem_data in data["mem_details"].items()
+        }
         return cls(circles, mem_details)
 
 

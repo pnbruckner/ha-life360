@@ -313,15 +313,8 @@ class Life360DeviceTracker(
         # Restore state if possible.
         if not (last_extra_data := await self.async_get_last_extra_data()):
             return
-        restored = last_extra_data.as_dict()
 
-        # TODO: Remove before beta.
-        # Previous version stored only location details under "loc_details" key.
-        # If that is what is read back, don't use it.
-        if "loc_details" in restored:
-            return
-
-        last_md = MemberData.from_dict(restored)
+        last_md = MemberData.from_dict(last_extra_data.as_dict())
         # Address data can be very old. Throw it away so it's not combined with
         # current address data.
         if last_md.loc:

@@ -17,10 +17,8 @@ from typing import Any, TypeVar, TypeVarTuple, cast
 from aiohttp import ClientSession
 from life360 import Life360Error, LoginError, NotModified, RateLimited
 
-from homeassistant.components.device_tracker import DOMAIN as DT_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
@@ -110,12 +108,9 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
             self.always_update = False
         self._store = store
         self._cm_data = self._load_cm_data()
-        # TODO: Remove once implementation is stable.
-        self._validate_cm_data()
         self.data = {
             mid: MemberData(md) for mid, md in self._cm_data.mem_details.items()
         }
-        # TODO: Create a sensor that lists all the Circles and which Members are in each
         #       and eventually, the names of the Places in each.
         self._options = ConfigOptions.from_dict(self.config_entry.options)
         self._acct_data: dict[AccountID, AccountData] = {}
@@ -166,21 +161,6 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
                     return
 
         _LOGGER.error("Could not update location of %s", md.name)
-
-    # TODO: Remove this once implementation is stable.
-    def _validate_cm_data(self) -> None:
-        """Validate CircleMemberData is consistent."""
-        mem_circles: dict[MemberID, set[CircleID]] = {}
-        for cid, circle_data in self._cm_data.circles.items():
-            assert circle_data.name
-            # Every Circle must be accessible from at least one account.
-            assert circle_data.aids
-            for mid in circle_data.mids:
-                mem_circles.setdefault(mid, set()).add(cid)
-        assert self._cm_data.mem_circles == mem_circles
-        assert set(mem_circles) == set(self._cm_data.mem_details)
-        for md in self._cm_data.mem_details.values():
-            assert md.name
 
     async def _async_update_data(self) -> Members:
         """Fetch the latest data from the source with lock."""
@@ -270,22 +250,6 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
 
         circles = self._store.circles
         mem_details = self._store.mem_details
-
-        # TODO: Remove before beta.
-        # Earlier versions did not store mem_details, so the names might be None. If so,
-        # try to fill them in from the entity registry. Worst case, use Member ID.
-        ent_reg = er.async_get(self.hass)
-        for mid, md in mem_details.items():
-            if cast(str | None, md.name) is not None:
-                continue
-            if (
-                (entity_id := ent_reg.async_get_entity_id(DT_DOMAIN, DOMAIN, mid))
-                and (reg_entry := ent_reg.async_get(entity_id))
-                and (name := (reg_entry.name or reg_entry.original_name))
-            ):
-                md.name = name
-            else:
-                md.name = mid
 
         mem_circles: dict[MemberID, set[CircleID]] = {}
         for cid, circle_data in circles.items():
@@ -398,8 +362,6 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
                     mem_details[mid] = old_md
 
         self._cm_data = CircleMemberData(circles, mem_details, mem_circles)
-        # TODO: Remove once implementation is stable.
-        self._validate_cm_data()
 
         # Protect storage writing in case we get cancelled while it's running. We do not
         # want to interrupt that process. It is an atomic operation, so if we get
@@ -695,9 +657,6 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
             for mid in no_circles:
                 del self._cm_data.mem_details[mid]
                 del self._cm_data.mem_circles[mid]
-
-            # TODO: Remove once implementation is stable.
-            self._validate_cm_data()
 
             await self._update_cm_data_start()
 
