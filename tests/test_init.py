@@ -5,10 +5,17 @@ from collections.abc import Generator, Iterable
 from itertools import chain, repeat
 from math import ceil
 import re
-from typing import Any
-from unittest.mock import AsyncMock, patch
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from custom_components.life360.const import DOMAIN
+from custom_components.life360.helpers import (
+    CircleData,
+    CircleID,
+    Life360Store,
+    MemberDetails,
+    MemberID,
+)
 from life360 import LoginError
 import pytest
 from pytest_homeassistant_custom_component.common import (
@@ -17,6 +24,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, UnitOfSpeed
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -30,20 +38,56 @@ from .conftest import Life360API_Data
 
 
 @pytest.fixture
-def setup_entry_mock() -> Generator[AsyncMock, None, None]:
+def setup_entry_mock(hass: HomeAssistant) -> Generator[AsyncMock, None, None]:
     """Mock async_setup_entry."""
     with patch("custom_components.life360.async_setup_entry", autospec=True) as mock:
+        # Teardown, in newer HA versions, will unload config entries. Add DOMAIN to
+        # hass.data so real async_unload_entry won't cause an exception.
+        hass.data[DOMAIN] = None
         mock.return_value = True
         yield mock
 
 
-# Set scope to module so fixture still remains in effect during teardown where entry
-# will be unloaded if not unloaded during test.
-@pytest.fixture(scope="module")
+@pytest.fixture
 def unload_entry_mock() -> Generator[AsyncMock, None, None]:
     """Mock async_unload_entry."""
     with patch("custom_components.life360.async_unload_entry", autospec=True) as mock:
         mock.return_value = True
+        yield mock
+
+
+@pytest.fixture
+def remove_entry_mock() -> Generator[AsyncMock, None, None]:
+    """Mock async_remove_entry."""
+    with patch("custom_components.life360.async_remove_entry", autospec=True) as mock:
+        mock.return_value = True
+        yield mock
+
+
+@pytest.fixture
+def bs_setup_entry_mock() -> Generator[AsyncMock, None, None]:
+    """Mock binary_sensor async_setup_entry."""
+    with patch(
+        "custom_components.life360.binary_sensor.async_setup_entry", autospec=True
+    ) as mock:
+        yield mock
+
+
+@pytest.fixture
+def dt_setup_entry_mock() -> Generator[AsyncMock, None, None]:
+    """Mock device_tracker async_setup_entry."""
+    with patch(
+        "custom_components.life360.device_tracker.async_setup_entry", autospec=True
+    ) as mock:
+        yield mock
+
+
+@pytest.fixture
+def coordinator_mock() -> Generator[MagicMock, None, None]:
+    """Mock Life360DataUpdateCoordinator."""
+    with patch(
+        "custom_components.life360.Life360DataUpdateCoordinator", autospec=True
+    ) as mock:
         yield mock
 
 
@@ -149,6 +193,7 @@ async def test_migration(
     caplog: pytest.LogCaptureFixture,
     setup_entry_mock: AsyncMock,
     unload_entry_mock: AsyncMock,
+    remove_entry_mock: AsyncMock,
     metric: bool,
     option_set: Iterable[tuple[float, float, bool]],
 ) -> None:
@@ -168,6 +213,7 @@ async def test_migration(
     comb_ds: float | None = None
     comb_ma: int | None = None
     comb_dr: bool = False
+    v1_entries: list[ConfigEntry] = []
     v1_entry_ids: list[str] = []
     entity_ids: list[str] = []
     for i, o in enumerate(option_set):
@@ -196,6 +242,7 @@ async def test_migration(
             options={"driving_speed": ds, "max_gps_accuracy": ma, "driving": dr},
         )
         v1_entry.add_to_hass(hass)
+        v1_entries.append(v1_entry)
         v1_entry_ids.append(v1_entry.entry_id)
 
         name = f"life360 online ({un})"
@@ -234,6 +281,9 @@ async def test_migration(
     v2_entry = entries[0]
     assert v2_entry.version == 2
     assert v2_entry.entry_id not in v1_entry_ids
+    # Check that v1 config entries got removed.
+    for entry in v1_entries:
+        remove_entry_mock.assert_any_call(hass, entry)
     # Check that v2 config entry got setup.
     setup_entry_mock.assert_called_once_with(hass, v2_entry)
 
@@ -343,3 +393,133 @@ async def test_uknown_config_version(
             rec.levelname == levelname and re.fullmatch(pat, rec.message)
             for rec in caplog.get_records("call")
         )
+
+
+# ========== config entry Tests ========================================================
+
+
+StoreData = dict[str, dict[str, dict[str, Any]]]
+empty_store: StoreData = {"circles": {}, "mem_details": {}}
+
+
+# fmt: off
+@pytest.mark.parametrize(
+    "store_data",
+    [
+        None,
+        empty_store,
+        {
+            "circles": {
+                "cid1": {"name": "Circle1", "aids": ["aid1"], "mids": ["mid1", "mid2"]},
+            },
+            "mem_details": {
+                "mid1": {"name": "First1 Last1", "entity_picture": None},
+                "mid2": {"name": "First2 Last2", "entity_picture": "EP2"},
+            },
+        },
+    ],
+)
+# fmt: on
+async def test_setup_entry(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    bs_setup_entry_mock: AsyncMock,
+    dt_setup_entry_mock: AsyncMock,
+    coordinator_mock: MagicMock,
+    store_data: StoreData | None,
+) -> None:
+    """Test config entry setup."""
+    if store_data is not None:
+        hass_storage[DOMAIN] = {"version": 1, "data": store_data}
+
+    v2_entry = MockConfigEntry(domain=DOMAIN, version=2)
+    v2_entry.add_to_hass(hass)
+
+    with assert_setup_component(0, DOMAIN):
+        assert await async_setup_component(hass, DOMAIN, {})
+        await hass.async_block_till_done()
+
+    coordinator_mock.assert_called_once()
+    args = coordinator_mock.call_args.args
+    assert len(args) == 2
+    assert args[0] is hass
+
+    store = cast(Life360Store, args[1])
+    if store_data is None:
+        assert not store.loaded_ok
+        assert store.circles == {}
+        assert store.mem_details == {}
+    else:
+        assert store.loaded_ok
+        store_circles = store_data["circles"]
+        restored_circles = store.circles
+        assert len(restored_circles) == len(store_circles)
+        for cid, cd in store_circles.items():
+            assert restored_circles[CircleID(cid)] == CircleData.from_dict(cd)
+        store_mem_details = store_data["mem_details"]
+        restored_mem_details = store.mem_details
+        assert len(restored_mem_details) == len(store_mem_details)
+        for mid, md in store_mem_details.items():
+            assert restored_mem_details[MemberID(mid)] == MemberDetails.from_dict(md)
+
+    coordinator = coordinator_mock.return_value
+    cast(AsyncMock, coordinator.async_config_entry_first_refresh).assert_called_once()
+    cast(AsyncMock, coordinator.async_config_entry_first_refresh).assert_awaited_once()
+    bs_setup_entry_mock.assert_called_once()
+    dt_setup_entry_mock.assert_called_once()
+
+
+async def test_reload_entry(
+    hass: HomeAssistant,
+    bs_setup_entry_mock: AsyncMock,
+    dt_setup_entry_mock: AsyncMock,
+    coordinator_mock: MagicMock,
+) -> None:
+    """Test config entry reload."""
+    v2_entry = MockConfigEntry(domain=DOMAIN, version=2)
+    v2_entry.add_to_hass(hass)
+
+    with assert_setup_component(0, DOMAIN):
+        assert await async_setup_component(hass, DOMAIN, {})
+        await hass.async_block_till_done()
+
+    coordinator_mock.reset_mock()
+    bs_setup_entry_mock.reset_mock()
+    dt_setup_entry_mock.reset_mock()
+
+    assert await hass.config_entries.async_reload(v2_entry.entry_id)
+    await hass.async_block_till_done()
+
+    coordinator_mock.assert_called_once()
+    coordinator = coordinator_mock.return_value
+    cast(AsyncMock, coordinator.async_config_entry_first_refresh).assert_called_once()
+    cast(AsyncMock, coordinator.async_config_entry_first_refresh).assert_awaited_once()
+    bs_setup_entry_mock.assert_called_once()
+    dt_setup_entry_mock.assert_called_once()
+
+
+async def test_remove_entry(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    bs_setup_entry_mock: AsyncMock,
+    dt_setup_entry_mock: AsyncMock,
+    coordinator_mock: MagicMock,
+) -> None:
+    """Test config entry removal."""
+    hass_storage[DOMAIN] = {"version": 1, "data": empty_store}
+
+    v2_entry = MockConfigEntry(domain=DOMAIN, version=2)
+    v2_entry.add_to_hass(hass)
+
+    with assert_setup_component(0, DOMAIN):
+        assert await async_setup_component(hass, DOMAIN, {})
+        await hass.async_block_till_done()
+
+    assert len(hass.config_entries.async_entries(DOMAIN)) == 1
+    assert DOMAIN in hass_storage
+
+    assert await hass.config_entries.async_remove(v2_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert not hass.config_entries.async_entries(DOMAIN)
+    assert DOMAIN not in hass_storage
