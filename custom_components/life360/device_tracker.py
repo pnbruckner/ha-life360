@@ -287,19 +287,16 @@ class Life360DeviceTracker(
                 attrs[ATTR_IGNORED_UPDATE_REASONS] = self._ignored_update_reasons
             return attrs
 
+        reason = {
+            NoLocReason.NOT_SET: "Member data could not be retrieved",
+            NoLocReason.NOT_SHARING: "Member is not sharing location",
+        }.get(self._data.loc_missing, cast(str, self._data.err_msg))
+
         if not self._warned_loc_unknown:
             self._warned_loc_unknown = True
-            _LOGGER.warning(
-                "Location data for %s is missing; see %s attribute for more details",
-                self,
-                ATTR_REASON,
-            )
+            _LOGGER.warning("Location data for %s is missing: %s", self, reason)
 
-        if self._data.loc_missing is NoLocReason.NOT_SET:
-            return attrs_unknown | {ATTR_REASON: "Member data could not be retrieved"}
-        if self._data.loc_missing is NoLocReason.NOT_SHARING:
-            return attrs_unknown | {ATTR_REASON: "Member is not sharing location"}
-        return attrs_unknown | {ATTR_REASON: self._data.err_msg}
+        return attrs_unknown | {ATTR_REASON: reason}
 
     @property
     def extra_restore_state_data(self) -> MemberData:
