@@ -7,7 +7,6 @@ from collections.abc import Callable, Coroutine, Iterable
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum, auto
 from functools import partial
 import logging
@@ -18,17 +17,15 @@ from aiohttp import ClientSession
 from life360 import Life360Error, LoginError, NotModified, RateLimited
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from . import helpers
 from .const import (
-    CIRCLE_UPDATE_INTERVAL,
     COMM_MAX_RETRIES,
     COMM_TIMEOUT,
     DOMAIN,
@@ -97,7 +94,6 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
     config_entry: ConfigEntry
     _first_refresh: bool = True
     _update_data_task: asyncio.Task | None = None
-    _update_cm_data_unsub: CALLBACK_TYPE | None = None
     _update_cm_data_task: asyncio.Task | None = None
 
     def __init__(self, hass: HomeAssistant, store: Life360Store) -> None:
@@ -183,7 +179,7 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
         result = Members()
 
         if self._first_refresh:
-            await self._update_cm_data_start(retry_first=False)
+            await self._update_cm_data_start()
             self.data = {
                 mid: MemberData(md) for mid, md in self._cm_data.mem_details.items()
             }
@@ -258,29 +254,23 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
 
         return CircleMemberData(circles, mem_details, mem_circles)
 
-    async def _update_cm_data_start(self, retry_first: bool = True) -> None:
-        """Start periodic updating of Circles & Members data."""
-        if not retry_first:
-            await self._update_cm_data(dt_util.now(), retry=False)
-            self.config_entry.async_create_background_task(
-                self.hass,
-                self._update_cm_data_start(),
-                "Start Circle & Member updating",
-            )
-            return
+    async def _update_cm_data_start(self) -> None:
+        """Update Circles & Members data.
 
-        await self._update_cm_data(dt_util.now())
-        self._update_cm_data_unsub = async_track_time_interval(
-            self.hass, self._update_cm_data, CIRCLE_UPDATE_INTERVAL
-        )
+        First attempt will not retry. A second attempt will be started in background if
+        first attempt does not completely succeed.
+        """
+        # If background update is still in progress, don't bother to start another
+        # update.
+        if self._update_cm_data_task:
+            return
+        if not await self._update_cm_data(retry=False):
+            self.config_entry.async_create_background_task(
+                self.hass, self._update_cm_data(retry=True), "Update Circles & Members"
+            )
 
     async def _update_cm_data_stop(self) -> None:
-        """Stop periodic updating of Circles & Members data."""
-        # Stop running it periodically.
-        if self._update_cm_data_unsub:
-            self._update_cm_data_unsub()
-            self._update_cm_data_unsub = None
-
+        """Stop updating of Circles & Members data."""
         # Stop it, and wait for it to stop, if it is running now.
         if not (update_cm_data_task := self._update_cm_data_task):
             return
@@ -288,17 +278,14 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
         with suppress(asyncio.CancelledError):
             await update_cm_data_task
 
-    async def _update_cm_data(self, now: datetime, retry: bool = True) -> None:
+    async def _update_cm_data(self, retry: bool) -> bool:
         """Update Life360 Circles & Members seen from all enabled accounts."""
-        # Guard against being called again while previous call is still in progress.
-        if self._update_cm_data_task:
-            return
-
+        start = dt_util.now()
         _LOGGER.debug("Begin updating Circles & Members")
         self._update_cm_data_task = cast(asyncio.Task, asyncio.current_task())
         cancelled = False
         try:
-            await self._do_update_cm_data(retry)
+            return await self._do_update_cm_data(retry)
         except asyncio.CancelledError:
             cancelled = True
             raise
@@ -306,12 +293,20 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
             _LOGGER.debug(
                 "Updating Circles & Members %stook %s",
                 "(which was cancelled) " if cancelled else "",
-                dt_util.now() - now,
+                dt_util.now() - start,
             )
             self._update_cm_data_task = None
 
-    async def _do_update_cm_data(self, retry: bool) -> None:
-        """Update Life360 Circles & Members seen from all enabled accounts."""
+    async def _do_update_cm_data(self, retry: bool) -> bool:
+        """Update Life360 Circles & Members seen from all enabled accounts.
+
+        rerty: If True, will retry indefinitely if login or rate limiting errors occur.
+        If False, will retrieve whatever data it can without retrying login or rate
+        limiting errors.
+
+        Returns True if Circles & Members were retrieved from all accounts without
+        error, or False if retry was False and at least one error occurred.
+        """
         circle_errors = False
         circles: dict[CircleID, CircleData] = {}
 
@@ -376,6 +371,8 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
             "Save to Life360 storage",
         )
         await asyncio.shield(save_task)
+
+        return not circle_errors
 
     async def _get_raw_circles_list(
         self,
