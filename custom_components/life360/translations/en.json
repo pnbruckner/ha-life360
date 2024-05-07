@@ -166,5 +166,11 @@
                 "4": "Above but no redactions"
             }
         }
+    },
+    "services": {
+        "update_location": {
+            "name": "Update location",
+            "description": "Request Member location update."
+        }
     }
 }

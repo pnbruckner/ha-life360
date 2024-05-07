@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Callable, Coroutine, Iterable
 from contextlib import suppress
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, auto
 from functools import partial
 import logging
@@ -37,29 +37,18 @@ from .helpers import (
     AccountID,
     CircleData,
     CircleID,
+    CirclesMembersData,
     ConfigOptions,
     Life360Store,
     MemberData,
     MemberDetails,
     MemberID,
-    Members,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 _R = TypeVar("_R")
 _Ts = TypeVarTuple("_Ts")
-
-
-@dataclass
-class CircleMemberData:
-    """Circle & Member data."""
-
-    # These come from the server, and are stored.
-    circles: dict[CircleID, CircleData] = field(default_factory=dict)
-    mem_details: dict[MemberID, MemberDetails] = field(default_factory=dict)
-    # This is derived from circles above for run-time convenience.
-    mem_circles: dict[MemberID, set[CircleID]] = field(default_factory=dict)
 
 
 @dataclass
@@ -88,36 +77,30 @@ class RequestError(Enum):
     NO_DATA = auto()
 
 
-class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
-    """Life360 data update coordinator."""
+class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersData]):
+    """Circles & Members data update coordinator."""
 
     config_entry: ConfigEntry
-    _first_refresh: bool = True
-    _update_data_task: asyncio.Task | None = None
-    _update_cm_data_task: asyncio.Task | None = None
+    _bg_update_task: asyncio.Task | None = None
 
     def __init__(self, hass: HomeAssistant, store: Life360Store) -> None:
         """Initialize data update coordinator."""
-        self._update_data_lock = asyncio.Lock()
-        super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=UPDATE_INTERVAL)
+        super().__init__(hass, _LOGGER, name=DOMAIN)
         # always_update added in 2023.9.
         if hasattr(self, "always_update"):
             self.always_update = False
         self._store = store
-        self._cm_data = self._load_cm_data()
-        self.data = {
-            mid: MemberData(md) for mid, md in self._cm_data.mem_details.items()
-        }
-        #       and eventually, the names of the Places in each.
+        self.data = self._data_from_store()
         self._options = ConfigOptions.from_dict(self.config_entry.options)
         self._acct_data: dict[AccountID, AccountData] = {}
         self._create_acct_data(self._options.accounts)
-        self._member_circle_data: dict[MemberID, dict[CircleID, MemberData]] = {}
+        self._client_request_ok = asyncio.Event()
+        self._client_request_ok.set()
+        self._client_tasks: set[asyncio.Task] = set()
 
         self.config_entry.async_on_unload(
             self.config_entry.add_update_listener(self._config_entry_updated)
         )
-        self.config_entry.async_on_unload(self._update_cm_data_stop)
 
     def acct_online(self, aid: AccountID) -> bool:
         """Return if account is online."""
@@ -129,163 +112,101 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
             return True
         return self._acct_data[aid].online
 
-    async def update_location(self, mid: MemberID) -> None:
-        """Request Member's locaiton be updated."""
-        if not (md := self._cm_data.mem_details.get(mid)):
-            _LOGGER.error(
-                "Could not update location of Member w/ ID %s: not known", mid
-            )
-            return
+    # Once supporting only HA 2024.5 or newer, change to @cached_property and clear
+    # cache (i.e., if hasattr(self, "mem_circles"): delattr(self, "mem_circles"))
+    # in _async_refresh_finished override, after call to async_set_updated_data and in
+    # _config_entry_updated after updating self.data.circles.
+    @property
+    def mem_circles(self) -> dict[MemberID, set[CircleID]]:
+        """Return Circles Members are in."""
+        return {
+            mid: {
+                cid
+                for cid, circle_data in self.data.circles.items()
+                if mid in circle_data.mids
+            }
+            for mid in self.data.mem_details
+        }
 
+    async def update_member_location(self, mid: MemberID) -> None:
+        """Request Member location update."""
+        name = self.data.mem_details[mid].name
         # Member may be in more than one Circle, and each of those Circles might be
         # accessible from more than one account. So try each Circle/account combination
         # until one works.
-        for cid in self._cm_data.mem_circles[mid]:
-            circle_data = self._cm_data.circles[cid]
+        for cid in self.mem_circles[mid]:
+            circle_data = self.data.circles[cid]
             for aid in circle_data.aids:
                 api = self._acct_data[aid].api
-                result = await self._request(
+                result = await self._client_request(
                     aid,
                     api.request_circle_member_location_update,
                     cid,
                     mid,
                     msg=(
-                        f"while requesting location update for {md.name} "
+                        f"while requesting location update for {name} "
                         f"via {circle_data.name} Circle"
                     ),
                 )
                 if not isinstance(result, RequestError):
                     return
 
-        _LOGGER.error("Could not update location of %s", md.name)
+        _LOGGER.error("Could not update location of %s", name)
 
-    async def _async_update_data(self) -> Members:
-        """Fetch the latest data from the source with lock."""
-        assert self._update_data_task is None
-        self._update_data_task = cast(asyncio.Task, asyncio.current_task())
-        try:
-            async with self._update_data_lock:
-                return await self._do_update_data()
-        except asyncio.CancelledError:
-            # We don't want task that was running this method to be cancelled. It needs
-            # to continue so it can schedule the next data update.
-            self._update_data_task.uncancel()
-            return self.data
-        finally:
-            self._update_data_task = None
-
-    async def _do_update_data(self) -> Members:
-        """Fetch the latest data from the source."""
-        result = Members()
-
-        if self._first_refresh:
-            await self._update_cm_data_start()
-            self.data = {
-                mid: MemberData(md) for mid, md in self._cm_data.mem_details.items()
-            }
-            self._first_refresh = False
-
-        cm_data = self._cm_data
-        n_circles = len(cm_data.circles)
-
-        # For each Member, get their raw server data from each Circle the Member is in.
-        raw_member_list_list = await asyncio.gather(
-            *(self._get_raw_member_list(mid, cm_data) for mid in cm_data.mem_circles)
+    async def get_raw_member_data(
+        self, mid: MemberID
+    ) -> dict[CircleID, dict[str, Any] | RequestError]:
+        """Get raw Member data from each Circle Member is in."""
+        cids = self.mem_circles[mid]
+        raw_member_list = await asyncio.gather(
+            *(self._get_raw_member(mid, cid) for cid in cids)
         )
-        for mid, raw_member_list in zip(cm_data.mem_circles, raw_member_list_list):
-            cids = cm_data.mem_circles[mid]
-            old_mcd = self._member_circle_data.get(mid)
+        return dict(zip(cids, raw_member_list))
 
-            # Process raw Member data for each Circle.
-            member_circle_data: dict[CircleID, MemberData] = {}
-            for cid, raw_member in zip(cids, raw_member_list):
-                if not isinstance(raw_member, RequestError):
-                    member_circle_data[cid] = MemberData.from_server(raw_member)
-                elif old_mcd and (old_md := old_mcd.get(cid)):
-                    member_circle_data[cid] = old_md
-            if member_circle_data:
-                # Save the data in case NotModified or server error on next cycle.
-                self._member_circle_data[mid] = member_circle_data
-                # Now take "best" data for Member.
-                result[mid] = sorted(member_circle_data.values())[-1]
-                if n_circles > 1:
-                    # Each Circle has its own Places. Collect all the Places where the
-                    # Member might be, while keeping the Circle they came from. Then
-                    # update the chosen MemberData with the Place or Places where the
-                    # Member is, with each having a suffix of the name of its Circle.
-                    places = {
-                        cid: cast(str, member_data.loc.details.place)
-                        for cid, member_data in member_circle_data.items()
-                        if member_data.loc and member_data.loc.details.place
-                    }
-                    if places:
-                        place: str | list[str] = [
-                            f"{c_place} ({cm_data.circles[cid].name})"
-                            for cid, c_place in places.items()
-                        ]
-                        if len(place) == 1:
-                            place = place[0]
-                        member_data = deepcopy(result[mid])
-                        assert member_data.loc
-                        member_data.loc.details.place = place
-                        result[mid] = member_data
-
-            else:
-                result[mid] = self.data[mid]
-
-        return result
-
-    def _load_cm_data(self) -> CircleMemberData:
-        """Load Circles & Members from storage."""
+    def _data_from_store(self) -> CirclesMembersData:
+        """Get Circles & Members from storage."""
         if not self._store.loaded_ok:
             _LOGGER.warning(
                 "Could not load Circles & Members from storage"
                 "; will wait for data from server"
             )
-            return CircleMemberData()
+            return CirclesMembersData()
+        return CirclesMembersData(self._store.circles, self._store.mem_details)
 
-        circles = self._store.circles
-        mem_details = self._store.mem_details
-
-        mem_circles: dict[MemberID, set[CircleID]] = {}
-        for cid, circle_data in circles.items():
-            for mid in circle_data.mids:
-                mem_circles.setdefault(mid, set()).add(cid)
-
-        return CircleMemberData(circles, mem_details, mem_circles)
-
-    async def _update_cm_data_start(self) -> None:
-        """Update Circles & Members data.
-
-        First attempt will not retry. A second attempt will be started in background if
-        first attempt does not completely succeed.
-        """
-        # If background update is still in progress, don't bother to start another
-        # update.
-        if self._update_cm_data_task:
-            return
-        if not await self._update_cm_data(retry=False):
-            self.config_entry.async_create_background_task(
-                self.hass, self._update_cm_data(retry=True), "Update Circles & Members"
+    async def _async_update_data(self) -> CirclesMembersData:
+        """Fetch the latest data from the source."""
+        done_msg = "Circles & Members list retrieval complete"
+        data, complete = await self._update_data(retry=False)
+        if not complete:
+            _LOGGER.warning(
+                "Could not retrieve full Circles & Members list from server"
+                "; will retry"
             )
 
-    async def _update_cm_data_stop(self) -> None:
-        """Stop updating of Circles & Members data."""
-        # Stop it, and wait for it to stop, if it is running now.
-        if not (update_cm_data_task := self._update_cm_data_task):
-            return
-        update_cm_data_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await update_cm_data_task
+            async def bg_update() -> None:
+                """Update Circles & Members in background."""
+                data, _ = await self._update_data(retry=True)
+                self.async_set_updated_data(data)
+                _LOGGER.warning(done_msg)
+                self._bg_update_task = None
 
-    async def _update_cm_data(self, retry: bool) -> bool:
+            assert not self._bg_update_task
+            self._bg_update_task = self.config_entry.async_create_background_task(
+                self.hass, bg_update(), "Update Circles & Members"
+            )
+
+        elif not self._store.loaded_ok:
+            _LOGGER.warning(done_msg)
+
+        return data
+
+    async def _update_data(self, retry: bool) -> tuple[CirclesMembersData, bool]:
         """Update Life360 Circles & Members seen from all enabled accounts."""
         start = dt_util.now()
         _LOGGER.debug("Begin updating Circles & Members")
-        self._update_cm_data_task = cast(asyncio.Task, asyncio.current_task())
         cancelled = False
         try:
-            return await self._do_update_cm_data(retry)
+            return await self._do_update(retry)
         except asyncio.CancelledError:
             cancelled = True
             raise
@@ -295,9 +216,8 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
                 "(which was cancelled) " if cancelled else "",
                 dt_util.now() - start,
             )
-            self._update_cm_data_task = None
 
-    async def _do_update_cm_data(self, retry: bool) -> bool:
+    async def _do_update(self, retry: bool) -> tuple[CirclesMembersData, bool]:
         """Update Life360 Circles & Members seen from all enabled accounts.
 
         rerty: If True, will retry indefinitely if login or rate limiting errors occur.
@@ -322,11 +242,8 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
                     circles[cid] = CircleData(raw_circle["name"])
                 circles[cid].aids.add(aid)
 
-        # Get Members in each Circle, recording their name & entity_picture, and keeping
-        # track of which Circles each Member is in, since a Member can be in more than
-        # one Circle.
+        # Get Members in each Circle, recording their name & entity_picture.
         mem_details: dict[MemberID, MemberDetails] = {}
-        mem_circles: dict[MemberID, set[CircleID]] = {}
         raw_members_list = await self._get_raw_members_list(circles)
         for circle, raw_members in zip(circles.items(), raw_members_list):
             if not isinstance(raw_members, RequestError):
@@ -336,7 +253,6 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
                     circle_data.mids.add(mid)
                     if mid not in mem_details:
                         mem_details[mid] = MemberDetails.from_server(raw_member)
-                    mem_circles.setdefault(mid, set()).add(cid)
 
         # If there were any errors while getting Circles for each account, then retry
         # must have been False. Since we haven't yet received Circle data for all
@@ -345,18 +261,14 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
         # absolutely sure they are no longer in any Circle visible from all enabled
         # accounts.
         if circle_errors:
-            for cid, old_circle_data in self._cm_data.circles.items():
+            for cid, old_circle_data in self.data.circles.items():
                 if cid in circles:
                     circles[cid].aids |= old_circle_data.aids
                 else:
                     circles[cid] = old_circle_data
-                    for mid in old_circle_data.mids:
-                        mem_circles.setdefault(mid, set()).add(cid)
-            for mid, old_md in self._cm_data.mem_details.items():
+            for mid, old_md in self.data.mem_details.items():
                 if mid not in mem_details:
                     mem_details[mid] = old_md
-
-        self._cm_data = CircleMemberData(circles, mem_details, mem_circles)
 
         # Protect storage writing in case we get cancelled while it's running. We do not
         # want to interrupt that process. It is an atomic operation, so if we get
@@ -372,7 +284,7 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
         )
         await asyncio.shield(save_task)
 
-        return not circle_errors
+        return CirclesMembersData(circles, mem_details), not circle_errors
 
     async def _get_raw_circles_list(
         self,
@@ -420,24 +332,14 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
             *(get_raw_members(cid, circle_data) for cid, circle_data in circles.items())
         )
 
-    async def _get_raw_member_list(
-        self, mid: MemberID, cm_data: CircleMemberData
-    ) -> list[dict[str, Any] | RequestError]:
-        """Get raw Member data from each Circle Member is in."""
-        name = cm_data.mem_details[mid].name
-        return await asyncio.gather(
-            *(
-                self._get_raw_member(mid, name, cid, cm_data.circles[cid])
-                for cid in cm_data.mem_circles[mid]
-            )
-        )
-
     async def _get_raw_member(
-        self, mid: MemberID, name: str, cid: CircleID, circle_data: CircleData
+        self, mid: MemberID, cid: CircleID
     ) -> dict[str, Any] | RequestError:
         """Get raw Member data from given Circle."""
+        name = self.data.mem_details[mid].name
+        circle_data = self.data.circles[cid]
         for aid in circle_data.aids:
-            raw_member = await self._request(
+            raw_member = await self._client_request(
                 aid,
                 partial(
                     self._acct_data[aid].api.get_circle_member,
@@ -452,6 +354,26 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
             if not isinstance(raw_member, RequestError):
                 return raw_member  # type: ignore[no-any-return]
         return RequestError.NO_DATA
+
+    async def _client_request(
+        self,
+        aid: AccountID,
+        target: Callable[[*_Ts], Coroutine[Any, Any, _R]],
+        *args: *_Ts,
+        msg: str,
+    ) -> _R | RequestError:
+        """Make a request to the Life360 server on behalf of Member coordinator."""
+        await self._client_request_ok.wait()
+
+        task = cast(asyncio.Task, asyncio.current_task())
+        self._client_tasks.add(task)
+        try:
+            return await self._request(aid, target, *args, msg=msg)
+        except asyncio.CancelledError:
+            task.uncancel()
+            return RequestError.NO_DATA
+        finally:
+            self._client_tasks.discard(task)
 
     # _requests = 0
 
@@ -624,46 +546,43 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
         if old_accts == new_accts:
             return
 
-        # Stop everything. Note that if _async_update_data gets cancelled, it will still
-        # be scheduled to run again, so that does not need to be done here.
-        await self._update_cm_data_stop()
-        if update_data_task := self._update_data_task:
-            update_data_task.cancel()
+        # Prevent any client requests from starting.
+        self._client_request_ok.clear()
 
-        # Prevent _do_update_data from running while _acct_data & _cm_data are being
-        # updated.
-        async with self._update_data_lock:
-            if update_data_task:
-                # Wait for task to finish. It will consume any cancellation, so we don't
-                # need to worry about getting a CancelledError here.
-                await update_data_task
+        # Stop everything.
+        if self._bg_update_task:
+            self._bg_update_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._bg_update_task
+            self._bg_update_task = None
+        # Client request tasks will consume any cancellation, so they can just be
+        # awaited.
+        for task in self._client_tasks:
+            task.cancel()
+        await asyncio.gather(*self._client_tasks)
 
-            del_acct_ids = old_acct_ids - new_acct_ids
-            self._delete_acct_data(del_acct_ids)
-            self._create_acct_data(new_acct_ids - old_acct_ids)
+        del_acct_ids = old_acct_ids - new_acct_ids
+        self._delete_acct_data(del_acct_ids)
+        self._create_acct_data(new_acct_ids - old_acct_ids)
 
-            # Remove any accounts that no longer exist, or at least, are no longer
-            # enabled, from CircleMemberData. If that leaves any Circles with no
-            # accounts that can access it, then also remove those Circles from
-            # CircleMemberData. And, lastly, if that leaves any Members not associated
-            # with at least one Circle, then remove those Members, too.
-            no_aids: list[CircleID] = []
-            for cid, circle_data in self._cm_data.circles.items():
-                circle_data.aids -= del_acct_ids
-                if not circle_data.aids:
-                    no_aids.append(cid)
-            no_circles: list[MemberID] = []
-            for cid in no_aids:
-                del self._cm_data.circles[cid]
-                for mid, mem_circles in self._cm_data.mem_circles.items():
-                    mem_circles.discard(cid)
-                    if not mem_circles:
-                        no_circles.append(mid)
-            for mid in no_circles:
-                del self._cm_data.mem_details[mid]
-                del self._cm_data.mem_circles[mid]
+        # Remove any accounts that no longer exist, or at least, are no longer
+        # enabled. If that leaves any Circles with no accounts that can access it, then
+        # also remove those Circles. And, lastly, if that leaves any Members not
+        # associated with at least one Circle, then remove those Members, too.
+        no_aids: list[CircleID] = []
+        for cid, circle_data in self.data.circles.items():
+            circle_data.aids -= del_acct_ids
+            if not circle_data.aids:
+                no_aids.append(cid)
+        for cid in no_aids:
+            del self.data.circles[cid]
+        for mid in [mid for mid in self.data.mem_details if not self.mem_circles[mid]]:
+            del self.data.mem_details[mid]
 
-            await self._update_cm_data_start()
+        await self.async_refresh()
+
+        # Allow client requests to proceed.
+        self._client_request_ok.set()
 
     def _create_acct_data(self, aids: Iterable[AccountID]) -> None:
         """Create data needed for each specified Life360 account."""
@@ -694,3 +613,73 @@ class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
             acct = self._acct_data.pop(aid)
             acct.session.detach()
             acct.failed_task.cancel()
+
+
+class MemberDataUpdateCoordinator(DataUpdateCoordinator[MemberData]):
+    """Member data update coordinator."""
+
+    config_entry: ConfigEntry
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        coordinator: CirclesMembersDataUpdateCoordinator,
+        mid: MemberID,
+    ) -> None:
+        """Initialize data update coordinator."""
+        mem_details = coordinator.data.mem_details[mid]
+        super().__init__(
+            hass, _LOGGER, name=mem_details.name, update_interval=UPDATE_INTERVAL
+        )
+        # always_update added in 2023.9.
+        if hasattr(self, "always_update"):
+            self.always_update = False
+        self.data = MemberData(mem_details)
+        self._coordinator = coordinator
+        self._mid = mid
+        self._member_data: dict[CircleID, MemberData] = {}
+
+    async def update_location(self) -> None:
+        """Request Member location update."""
+        await self._coordinator.update_member_location(self._mid)
+
+    async def _async_update_data(self) -> MemberData:
+        """Fetch the latest data from the source."""
+        raw_member_data = await self._coordinator.get_raw_member_data(self._mid)
+
+        member_data: dict[CircleID, MemberData] = {}
+        for cid, raw_member in raw_member_data.items():
+            if not isinstance(raw_member, RequestError):
+                member_data[cid] = MemberData.from_server(raw_member)
+            elif old_md := self._member_data.get(cid):
+                member_data[cid] = old_md
+        if not member_data:
+            return self.data
+
+        # Save the data in case NotModified or server error on next cycle.
+        self._member_data = member_data
+
+        # Now take "best" data for Member.
+        data = sorted(member_data.values())[-1]
+        if len(self._coordinator.data.circles) > 1:
+            # Each Circle has its own Places. Collect all the Places where the
+            # Member might be, while keeping the Circle they came from. Then
+            # update the chosen MemberData with the Place or Places where the
+            # Member is, with each having a suffix of the name of its Circle.
+            places = {
+                cid: cast(str, md.loc.details.place)
+                for cid, md in member_data.items()
+                if md.loc and md.loc.details.place
+            }
+            if places:
+                place: str | list[str] = [
+                    f"{c_place} ({self._coordinator.data.circles[cid].name})"
+                    for cid, c_place in places.items()
+                ]
+                if len(place) == 1:
+                    place = place[0]
+                data = deepcopy(data)
+                assert data.loc
+                data.loc.details.place = place
+
+        return data

@@ -360,7 +360,7 @@ class CircleData:
     """Circle data."""
 
     name: str
-    aids: set[AccountID] = field(default_factory=set)
+    aids: set[AccountID] = field(default_factory=set, compare=False)
     mids: set[MemberID] = field(default_factory=set)
 
     @classmethod
@@ -370,8 +370,8 @@ class CircleData:
 
 
 @dataclass
-class StoredData:
-    """Life360 storage data."""
+class CirclesMembersData:
+    """Circles & Members data."""
 
     circles: dict[CircleID, CircleData] = field(default_factory=dict)
     mem_details: dict[MemberID, MemberDetails] = field(default_factory=dict)
@@ -398,7 +398,7 @@ class Life360Store:
     """Life360 storage."""
 
     _loaded_ok: bool = False
-    data: StoredData
+    data: CirclesMembersData
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize storage."""
@@ -438,10 +438,10 @@ class Life360Store:
         Also sets loaded_ok accordingly.
         """
         if store_data := await self._store.async_load():
-            self.data = StoredData.from_dict(store_data)
+            self.data = CirclesMembersData.from_dict(store_data)
             self._loaded_ok = True
         else:
-            self.data = StoredData()
+            self.data = CirclesMembersData()
         return self._loaded_ok
 
     async def save(self) -> None:

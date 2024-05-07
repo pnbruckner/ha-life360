@@ -17,7 +17,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ATTRIBUTION, DOMAIN, SIGNAL_ACCT_STATUS
-from .coordinator import Life360DataUpdateCoordinator
+from .coordinator import CirclesMembersDataUpdateCoordinator
 from .helpers import AccountID, ConfigOptions
 
 _LOGGER = logging.getLogger(__name__)
@@ -29,7 +29,9 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the binary sensory platform."""
-    coordinator = cast(Life360DataUpdateCoordinator, hass.data[DOMAIN])
+    coordinator = cast(
+        CirclesMembersDataUpdateCoordinator, hass.data[DOMAIN]["coordinator"]
+    )
     entities: dict[AccountID, Life360BinarySensor] = {}
 
     async def process_config(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -65,7 +67,7 @@ class Life360BinarySensor(BinarySensorEntity):
     _attr_should_poll = False
 
     def __init__(
-        self, coordinator: Life360DataUpdateCoordinator, aid: AccountID
+        self, coordinator: CirclesMembersDataUpdateCoordinator, aid: AccountID
     ) -> None:
         """Initialize binary sensor."""
         self._attr_name = f"Life360 online ({aid})"

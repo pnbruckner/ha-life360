@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Mapping
 from contextlib import suppress
 from copy import deepcopy
-from functools import cached_property, partial
+from functools import cached_property
 import logging
 from typing import Any, cast
 
@@ -21,6 +21,7 @@ from homeassistant.const import (
     UnitOfSpeed,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -39,9 +40,14 @@ from .const import (
     ATTR_WIFI_ON,
     ATTRIBUTION,
     DOMAIN,
+    SIGNAL_MEMBERS_CHANGED,
+    SIGNAL_UPDATE_LOCATION,
     STATE_DRIVING,
 )
-from .coordinator import Life360DataUpdateCoordinator
+from .coordinator import (
+    CirclesMembersDataUpdateCoordinator,
+    MemberDataUpdateCoordinator,
+)
 from .helpers import ConfigOptions, MemberData, MemberID, NoLocReason
 
 _LOGGER = logging.getLogger(__name__)
@@ -53,12 +59,18 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the device tracker platform."""
-    coordinator = cast(Life360DataUpdateCoordinator, hass.data[DOMAIN])
+    coordinator = cast(
+        CirclesMembersDataUpdateCoordinator, hass.data[DOMAIN]["coordinator"]
+    )
+    mem_coordinator = cast(
+        dict[MemberID, MemberDataUpdateCoordinator],
+        hass.data[DOMAIN]["mem_coordinator"],
+    )
     entities: dict[MemberID, Life360DeviceTracker] = {}
 
     async def async_process_data() -> None:
-        """Process new Life360 Member data."""
-        mids = set(coordinator.data)
+        """Process Members."""
+        mids = set(coordinator.data.mem_details)
         cur_mids = set(entities)
         del_mids = cur_mids - mids
         add_mids = mids - cur_mids
@@ -77,41 +89,37 @@ async def async_setup_entry(
             new_entities: list[Life360DeviceTracker] = []
             names = []
             for mid in add_mids:
-                entity = Life360DeviceTracker(coordinator, mid)
+                entity = Life360DeviceTracker(mem_coordinator[mid], mid)
                 entities[mid] = entity
                 new_entities.append(entity)
                 names.append(str(entity))
             _LOGGER.debug("Adding entities: %s", ", ".join(names))
             async_add_entities(new_entities)
 
-    @callback
-    def process_data() -> None:
-        """Process Members."""
-        create_process_task = partial(
-            entry.async_create_background_task,
-            hass,
-            async_process_data(),
-            "Process Members",
+    async def update_location(entity_id: str | list[str]) -> None:
+        """Request Member location update."""
+        await asyncio.gather(
+            *(
+                entity.update_location()
+                for entity in entities.values()
+                if entity_id == "all" or entity.entity_id in entity_id
+            )
         )
-        # eager_start parameter was added in 2024.3.
-        try:
-            create_process_task(eager_start=True)
-        except TypeError:
-            create_process_task()
 
     await async_process_data()
-    entry.async_on_unload(coordinator.async_add_listener(process_data))
+    async_dispatcher_connect(hass, SIGNAL_MEMBERS_CHANGED, async_process_data)
+    async_dispatcher_connect(hass, SIGNAL_UPDATE_LOCATION, update_location)
 
 
 class Life360DeviceTracker(
-    CoordinatorEntity[Life360DataUpdateCoordinator], TrackerEntity, RestoreEntity
+    CoordinatorEntity[MemberDataUpdateCoordinator], TrackerEntity, RestoreEntity
 ):
     """Life360 Device Tracker."""
 
     _attr_attribution = ATTRIBUTION
     _attr_translation_key = "tracker"
     _attr_unique_id: MemberID
-    coordinator: Life360DataUpdateCoordinator
+    coordinator: MemberDataUpdateCoordinator
     _warned_loc_unknown = False
 
     _unrecorded_attributes = frozenset(
@@ -121,14 +129,12 @@ class Life360DeviceTracker(
         }
     )
 
-    def __init__(
-        self, coordinator: Life360DataUpdateCoordinator, mid: MemberID
-    ) -> None:
+    def __init__(self, coordinator: MemberDataUpdateCoordinator, mid: MemberID) -> None:
         """Initialize Life360 Entity."""
         super().__init__(coordinator)
         self._attr_unique_id = mid
         self._options = ConfigOptions.from_dict(coordinator.config_entry.options)
-        self._prev_data = self._data = deepcopy(coordinator.data[mid])
+        self._prev_data = self._data = deepcopy(coordinator.data)
         self._update_basic_attrs()
         self._ignored_update_reasons: list[str] = []
 
@@ -325,36 +331,27 @@ class Life360DeviceTracker(
         self._prev_data = last_md
         self._process_update()
 
-    async def async_update(self) -> None:
-        """Update the entity.
+    async def update_location(self) -> None:
+        """Request Member location update.
 
-        Only used by the generic entity update service.
-        Send request to Member to update their location.
         Typically causes the Member to update every 5 seconds for one minute.
         """
-        # Ignore manual update requests if the entity is disabled
+        # Ignore if the entity is disabled
         if not self.enabled:
             return
-        _LOGGER.debug("Sending location update request for %s", self)
-        await self.coordinator.update_location(self._mid)
+        await self.coordinator.update_location()
 
     @callback
     def _handle_coordinator_update(self, config_changed: bool = False) -> None:
         """Handle updated data from the coordinator."""
-        # In case Member is no longer visible, and hence, is no longer in coordinator
-        # data, just leave. The entity will be removed very soon.
-        if self._mid not in self.coordinator.data:
-            return
-
-        latest_data = self.coordinator.data[self._mid]
-        if latest_data == self._data and not config_changed:
+        if self.coordinator.data == self._data and not config_changed:
             return
 
         # Since _process_update might overwrite parts of the Member data (e.g., if
         # gps_accuracy is bad), and since the original data needs to be re-processed
         # when a config option changes (e.g., GPS accuracy limit), make a copy of
         # the data before processing it.
-        self._data = deepcopy(latest_data)
+        self._data = deepcopy(self.coordinator.data)
         self._update_basic_attrs()
         self._process_update()
 

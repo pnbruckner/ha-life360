@@ -12,6 +12,7 @@ from custom_components.life360.const import DOMAIN
 from custom_components.life360.helpers import (
     CircleData,
     CircleID,
+    CirclesMembersData,
     Life360Store,
     MemberDetails,
     MemberID,
@@ -84,9 +85,18 @@ def dt_setup_entry_mock() -> Generator[AsyncMock, None, None]:
 
 @pytest.fixture
 def coordinator_mock() -> Generator[MagicMock, None, None]:
-    """Mock Life360DataUpdateCoordinator."""
+    """Mock CirclesMembersDataUpdateCoordinator."""
     with patch(
-        "custom_components.life360.Life360DataUpdateCoordinator", autospec=True
+        "custom_components.life360.CirclesMembersDataUpdateCoordinator", autospec=True
+    ) as mock:
+        yield mock
+
+
+@pytest.fixture
+def mem_coordinator_mock() -> Generator[MagicMock, None, None]:
+    """Mock MemberDataUpdateCoordinator."""
+    with patch(
+        "custom_components.life360.MemberDataUpdateCoordinator", autospec=True
     ) as mock:
         yield mock
 
@@ -426,14 +436,32 @@ async def test_setup_entry(
     bs_setup_entry_mock: AsyncMock,
     dt_setup_entry_mock: AsyncMock,
     coordinator_mock: MagicMock,
+    mem_coordinator_mock: MagicMock,
     store_data: StoreData | None,
 ) -> None:
     """Test config entry setup."""
     if store_data is not None:
         hass_storage[DOMAIN] = {"version": 1, "data": store_data}
+        crd_data = CirclesMembersData(
+            {
+                CircleID(cid): CircleData.from_dict(cd)
+                for cid, cd in store_data["circles"].items()
+            },
+            {
+                MemberID(mid): MemberDetails.from_dict(md)
+                for mid, md in store_data["mem_details"].items()
+            },
+        )
+    else:
+        crd_data = CirclesMembersData()
+    mids = list(crd_data.mem_details)
+    n_mids = len(mids)
 
     v2_entry = MockConfigEntry(domain=DOMAIN, version=2)
     v2_entry.add_to_hass(hass)
+
+    crd = coordinator_mock.return_value
+    crd.data = crd_data
 
     with assert_setup_component(0, DOMAIN):
         assert await async_setup_component(hass, DOMAIN, {})
@@ -445,28 +473,22 @@ async def test_setup_entry(
     assert args[0] is hass
 
     store = cast(Life360Store, args[1])
-    if store_data is None:
-        assert not store.loaded_ok
-        assert store.circles == {}
-        assert store.mem_details == {}
-    else:
-        assert store.loaded_ok
-        store_circles = store_data["circles"]
-        restored_circles = store.circles
-        assert len(restored_circles) == len(store_circles)
-        for cid, cd in store_circles.items():
-            assert restored_circles[CircleID(cid)] == CircleData.from_dict(cd)
-        store_mem_details = store_data["mem_details"]
-        restored_mem_details = store.mem_details
-        assert len(restored_mem_details) == len(store_mem_details)
-        for mid, md in store_mem_details.items():
-            assert restored_mem_details[MemberID(mid)] == MemberDetails.from_dict(md)
+    assert store.circles == crd_data.circles
+    assert store.mem_details == crd_data.mem_details
 
-    coordinator = coordinator_mock.return_value
-    cast(AsyncMock, coordinator.async_config_entry_first_refresh).assert_called_once()
-    cast(AsyncMock, coordinator.async_config_entry_first_refresh).assert_awaited_once()
+    crd_1st_refresh = cast(AsyncMock, crd.async_config_entry_first_refresh)
+    crd_1st_refresh.assert_called_once()
+    crd_1st_refresh.assert_awaited_once()
     bs_setup_entry_mock.assert_called_once()
     dt_setup_entry_mock.assert_called_once()
+
+    assert mem_coordinator_mock.call_count == n_mids
+    for mid in mids:
+        mem_coordinator_mock.assert_any_call(hass, crd, mid)
+    mem_crd = mem_coordinator_mock.return_value
+    mem_crd_1st_refresh = cast(AsyncMock, mem_crd.async_config_entry_first_refresh)
+    assert mem_crd_1st_refresh.call_count == n_mids
+    assert mem_crd_1st_refresh.await_count == n_mids
 
 
 async def test_reload_entry(
@@ -478,6 +500,9 @@ async def test_reload_entry(
     """Test config entry reload."""
     v2_entry = MockConfigEntry(domain=DOMAIN, version=2)
     v2_entry.add_to_hass(hass)
+
+    crd = coordinator_mock.return_value
+    crd.data = CirclesMembersData()
 
     with assert_setup_component(0, DOMAIN):
         assert await async_setup_component(hass, DOMAIN, {})
@@ -491,9 +516,9 @@ async def test_reload_entry(
     await hass.async_block_till_done()
 
     coordinator_mock.assert_called_once()
-    coordinator = coordinator_mock.return_value
-    cast(AsyncMock, coordinator.async_config_entry_first_refresh).assert_called_once()
-    cast(AsyncMock, coordinator.async_config_entry_first_refresh).assert_awaited_once()
+    crd_1st_refresh = cast(AsyncMock, crd.async_config_entry_first_refresh)
+    crd_1st_refresh.assert_called_once()
+    crd_1st_refresh.assert_awaited_once()
     bs_setup_entry_mock.assert_called_once()
     dt_setup_entry_mock.assert_called_once()
 
@@ -510,6 +535,9 @@ async def test_remove_entry(
 
     v2_entry = MockConfigEntry(domain=DOMAIN, version=2)
     v2_entry.add_to_hass(hass)
+
+    crd = coordinator_mock.return_value
+    crd.data = CirclesMembersData()
 
     with assert_setup_component(0, DOMAIN):
         assert await async_setup_component(hass, DOMAIN, {})

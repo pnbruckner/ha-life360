@@ -34,4 +34,8 @@ CONF_SHOW_DRIVING = "driving"
 CONF_TOKEN_TYPE = "token_type"
 CONF_VERBOSITY = "verbosity"
 
+SERVICE_UPDATE_LOCATION = "update_location"
+
 SIGNAL_ACCT_STATUS = "life360_acct_status"
+SIGNAL_MEMBERS_CHANGED = "life360_members_changed"
+SIGNAL_UPDATE_LOCATION = "life360_update_location"
