@@ -9,40 +9,15 @@ It would be great to get feedback from real world usage. If you're willing, read
 
 ## Current Changes / Improvements
 
-The main purpose of the current set of changes is to use a single, central "data coordinator" to retrieve
-data from the Life360 server using all registered accounts (i.e., Life360 integrations), instead of each
-account/integration retrieving data individually as is done in the current implementation.
-
-As a bit of background, the last set of significant changes (introduced in 2022.7) converted the integration from
-a "legacy" tracker to the new entity-based implementation.
-At the same time the code made use of the "standard" DataUpdateCoordinator class. But that resulted in each Life360
-account being retreived separately, and hence there was no easy way to coordinate the data from multiple accounts.
-
-These new changes goes back to one, "central" coordinator that retrieves data for all accounts at the same time.
-This allows the data to be handled in a much more intelligent way. E.g., once a Circle's Places & Members are
-retrieved, they do not need to be retrieved again if another account can access it. Also, Members that are in
-multiple Circles can have the best data used when they share their location differently in the different Circles.
-
-Another significant change is that Members that have no available location data (e.g., they don't share location
-with the Circles that are reachable, or their device has been off or has not had network access for a long time)
-will still get registered in the Entity Registry and will have `device_tracker` entities created for them. This
-keeps things consistent when Members "come and go" for these reasons. Of course, any entity can be hidden or
-disabled via the Entity Registry if desired.
-
-Lastly, a `binary_sensor` has been added for each account (aka config, aka integration) that indicates
-if server communications are working ok - i.e., if it's "online". By default the name will be
-"life360 online (USERNAME)", and the entity ID will be `binary_sensor.life360_online_username`, but they can,
-of course, be changed via the Entities page, or the entity can be disabled if you'd rather not see it.
+As of HA 2024.2 the built-in Life360 integration was removed due to the integration effectively being broken and seemingly unrepairable.
+It appeared Life360 and/or Cloudflare were actively blocking third party usage of their API.
+However, since that time, a better understanding of the (undocumented & unsupported) API has been developed.
+This custom integration is now able to use the API again.
+It's, of course, yet to be seen if it will continue to work.
 
 ## Versions
 
-This is being tested with Home Assistant 2021.12.10 & the latest available release, using Python 3.9. If you're using different versions your
-mileage may vary. If you'd still like to give it a try, let me know what versions you're using and I'll try
-to test with them first.
-
-## Backup
-
-It should go without saying you should make a backup of your configuration before giving this a try.
+Home Assistant 2023.8 or newer is currently supported.
 
 ## Installation
 
@@ -55,14 +30,14 @@ not sure how, see some [suggestions below](#installation-suggestions), or feel f
 [Home Assistant Forum](https://community.home-assistant.io/u/pnbruckner/summary) or by opening an
 [issue here](https://github.com/pnbruckner/ha-life360/issues).
 
-Once this custom integration is installed it will be used instead of the built-in integration.
+Once this custom integration is installed it will be used instead of the built-in integration (which, of course, does not exist at this time.)
 
-## Attribute changes
+## Services
 
-attribute | changed to | description
--|-|-
-`reason` | added | If a Member's location is not available, the entity's state will become `unknown` and this attribute will explain why.
-`ignored_update_reasons` | added | If a Member's location update is temporarily ignored because its `last_seen` attribute has gone "backwards", or its `gps_accuracy` doesn't satisfy the specified limit, this attribute will indicate which apply.
+A new service, `life360.update_location`, can be used to request a location update for one or more Members.
+Once this service is called, the Member's location will typically be updated every five seconds for about one minute.
+The service takes one parameters, `entity_id`, which can be a single entity ID, a list of entity ID's, or the word "all" (which means all Life360 trackers.)
+The use of the `target` parameter should also work.
 
 ## PLEASE REMEMBER TO GIVE ME FEEDBACK & THANK YOU!
 
