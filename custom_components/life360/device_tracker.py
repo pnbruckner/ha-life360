@@ -246,17 +246,6 @@ class Life360DeviceTracker(
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Return entity specific state attributes."""
-        attrs_unknown = {
-            ATTR_ADDRESS: None,
-            ATTR_AT_LOC_SINCE: None,
-            ATTR_BATTERY_CHARGING: None,
-            ATTR_DRIVING: None,
-            ATTR_LAST_SEEN: None,
-            ATTR_PLACE: None,
-            ATTR_SPEED: None,
-            ATTR_WIFI_ON: None,
-        }
-
         if self._data.loc:
             self._warned_loc_unknown = False
 
@@ -302,7 +291,7 @@ class Life360DeviceTracker(
             self._warned_loc_unknown = True
             _LOGGER.warning("Location data for %s is missing: %s", self, reason)
 
-        return attrs_unknown | {ATTR_REASON: reason}
+        return {ATTR_REASON: reason}
 
     @property
     def extra_restore_state_data(self) -> MemberData:

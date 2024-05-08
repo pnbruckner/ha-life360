@@ -178,12 +178,12 @@ async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
                 )
                 await _migrate_config_entries(hass, entries)
 
-        @callback
-        def update_location(call: ServiceCall) -> None:
-            """Request Member location update."""
-            async_dispatcher_send(
-                hass, SIGNAL_UPDATE_LOCATION, call.data[CONF_ENTITY_ID]
-            )
+    @callback
+    def update_location(call: ServiceCall) -> None:
+        """Request Member location update."""
+        async_dispatcher_send(
+            hass, SIGNAL_UPDATE_LOCATION, call.data[CONF_ENTITY_ID]
+        )
 
     hass.services.async_register(
         DOMAIN, SERVICE_UPDATE_LOCATION, update_location, _UPDATE_LOCATION_SCHEMA
@@ -252,7 +252,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Remove config entry."""
     # Don't delete store when migrating from version 1 config entry.
-    if entry.version < 2:
+    if entry.version == 1:
         return True
     await Life360Store(hass).remove()
     return True
