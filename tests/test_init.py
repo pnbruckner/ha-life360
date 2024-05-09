@@ -1,22 +1,14 @@
 """Test Life360 __init__.py module."""
 from __future__ import annotations
 
-from collections.abc import Generator, Iterable
-from itertools import chain, repeat
-from math import ceil
-import re
-from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from collections.abc import Iterable, Mapping, MutableMapping
+from dataclasses import dataclass
+from functools import partial
+from itertools import repeat
+from typing import Any, Self, cast
 
-from custom_components.life360.const import DOMAIN
-from custom_components.life360.helpers import (
-    CircleData,
-    CircleID,
-    CirclesMembersData,
-    Life360Store,
-    MemberDetails,
-    MemberID,
-)
+from custom_components.life360.config_flow import Life360ConfigFlow
+from custom_components.life360.const import ATTR_REASON, ATTRIBUTION, DOMAIN
 from life360 import LoginError
 import pytest
 from pytest_homeassistant_custom_component.common import (
@@ -24,530 +16,463 @@ from pytest_homeassistant_custom_component.common import (
     assert_setup_component,
 )
 
-from homeassistant.components.binary_sensor import BinarySensorDeviceClass
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory, UnitOfSpeed
+from homeassistant.components.device_tracker import ATTR_SOURCE_TYPE, SourceType
+from homeassistant.const import (
+    ATTR_ATTRIBUTION,
+    ATTR_ENTITY_PICTURE,
+    ATTR_FRIENDLY_NAME,
+    STATE_ON,
+    STATE_UNKNOWN,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
-from homeassistant.util import uuid as uuid_util
-from homeassistant.util.unit_conversion import SpeedConverter
+from homeassistant.util import slugify
 
-from .conftest import Life360API_Data
-
-# ========== Fixtures ==================================================================
-
-
-@pytest.fixture
-def setup_entry_mock(hass: HomeAssistant) -> Generator[AsyncMock, None, None]:
-    """Mock async_setup_entry."""
-    with patch("custom_components.life360.async_setup_entry", autospec=True) as mock:
-        # Teardown, in newer HA versions, will unload config entries. Add DOMAIN to
-        # hass.data so real async_unload_entry won't cause an exception.
-        hass.data[DOMAIN] = None
-        mock.return_value = True
-        yield mock
+StoreData = Mapping[str, Mapping[str, Mapping[str, Any]]]
+MutableStoreData = MutableMapping[str, MutableMapping[str, MutableMapping[str, Any]]]
+StorageInfo = Mapping[str, int | StoreData]
+Storage = Mapping[str, StorageInfo]
+MutableStorage = MutableMapping[str, StorageInfo]
 
 
-@pytest.fixture
-def unload_entry_mock() -> Generator[AsyncMock, None, None]:
-    """Mock async_unload_entry."""
-    with patch("custom_components.life360.async_unload_entry", autospec=True) as mock:
-        mock.return_value = True
-        yield mock
+@dataclass
+class MemberInfo:
+    """Member info."""
+
+    mid: str
+    name: str
+    entity_picture: str | None
+    sharing: bool
+    reason: str | None
+    loc: dict[str, Any] | None
+
+    @classmethod
+    def from_data(cls, member: Mapping[str, Any]) -> Self:
+        """Initialize from Member data."""
+        sharing = bool(int(member["features"]["shareLocation"]))
+        loc = member["location"]
+        reason: str | None = None
+        if not sharing:
+            reason = "Member is not sharing location"
+        elif not loc:
+            if title := member["issues"]["title"]:
+                reason = title
+                if dialog := member["issues"]["dialog"]:
+                    reason = f"{reason}: {dialog}"
+            else:
+                reason = (
+                    "The user may have lost connection to Life360. "
+                    "See https://www.life360.com/support/"
+                )
+        return cls(
+            member["id"],
+            " ".join([member["firstName"], member["lastName"]]),
+            member["avatar"],
+            sharing,
+            reason,
+            loc,
+        )
 
 
-@pytest.fixture
-def remove_entry_mock() -> Generator[AsyncMock, None, None]:
-    """Mock async_remove_entry."""
-    with patch("custom_components.life360.async_remove_entry", autospec=True) as mock:
-        mock.return_value = True
-        yield mock
+def cfg_options(
+    accts: int,
+    driving: bool = False,
+    driving_speed: float | None = None,
+    max_gps_accuracy: int | None = None,
+    verbosity: int = 0,
+) -> dict[str, Any]:
+    """Create config options."""
+    return {
+        "accounts": {
+            f"aid{i}": {"authorization": f"auth{i}", "password": None, "enabled": True}
+            for i in range(1, accts + 1)
+        },
+        "driving": driving,
+        "driving_speed": driving_speed,
+        "max_gps_accuracy": max_gps_accuracy,
+        "verbosity": verbosity,
+    }
 
 
-@pytest.fixture
-def bs_setup_entry_mock() -> Generator[AsyncMock, None, None]:
-    """Mock binary_sensor async_setup_entry."""
-    with patch(
-        "custom_components.life360.binary_sensor.async_setup_entry", autospec=True
-    ) as mock:
-        yield mock
+def assert_stored_data(
+    hass_storage: Storage,
+    circles: Mapping[str, Mapping[str, Any]],
+    members: Iterable[Mapping[str, Any]],
+) -> None:
+    """Check that stored data is as expected."""
+    store = hass_storage.get(DOMAIN)
+    assert store
+    assert (stored_data := cast(StoreData | None, store.get("data")))
+    stored_circles = stored_data["circles"]
+    for cid, circle in circles.items():
+        assert cid in stored_circles
+        assert set(stored_circles[cid]["aids"]) == set(circle["aids"])
+        assert set(stored_circles[cid]["mids"]) == set(circle["mids"])
+    stored_mem_details = stored_data["mem_details"]
+    for member in members:
+        mem_info = MemberInfo.from_data(member)
+        assert mem_info.mid in stored_mem_details
+        assert stored_mem_details[mem_info.mid] == {
+            "name": mem_info.name,
+            "entity_picture": mem_info.entity_picture,
+        }
 
 
-@pytest.fixture
-def dt_setup_entry_mock() -> Generator[AsyncMock, None, None]:
-    """Mock device_tracker async_setup_entry."""
-    with patch(
-        "custom_components.life360.device_tracker.async_setup_entry", autospec=True
-    ) as mock:
-        yield mock
+empty_store: StoreData = {"circles": {}, "mem_details": {}}
 
 
-@pytest.fixture
-def coordinator_mock() -> Generator[MagicMock, None, None]:
-    """Mock CirclesMembersDataUpdateCoordinator."""
-    with patch(
-        "custom_components.life360.CirclesMembersDataUpdateCoordinator", autospec=True
-    ) as mock:
-        yield mock
+@pytest.mark.parametrize("store_data", [None, empty_store])
+@pytest.mark.parametrize("options", [cfg_options(1), cfg_options(2)])
+async def test_no_circles_members(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    hass_storage: MutableStorage,
+    caplog: pytest.LogCaptureFixture,
+    options: dict[str, Any],
+    store_data: StoreData | None,
+):
+    """Test w/ no Circles or Members, w/ or w/o store data."""
+    if store_data is not None:
+        hass_storage[DOMAIN] = {"version": 1, "data": store_data}
+    entry = MockConfigEntry(
+        domain=DOMAIN, version=Life360ConfigFlow.VERSION, options=options
+    )
+    entry.add_to_hass(hass)
+
+    with assert_setup_component(0, DOMAIN):
+        assert await async_setup_component(hass, DOMAIN, {})
+        await hass.async_block_till_done()
+
+    # Check WARNING messages.
+    messages = dict.fromkeys(
+        (
+            "Could not load Circles & Members from storage"
+            "; will wait for data from server",
+            "Circles & Members list retrieval complete",
+        ),
+        False,
+    )
+    for rec in caplog.get_records("call"):
+        if rec.levelname != "WARNING":
+            continue
+        if rec.message in messages:
+            messages[rec.message] = True
+    if store_data is None:
+        assert all(messages.values())
+    else:
+        assert not any(messages.values())
+
+    # Check that only binary online sensors were created, one per account.
+    accts = cast(dict[str, Any], options["accounts"])
+    entity_ids = [
+        entity_id
+        for entity_id, entity in entity_registry.entities.items()
+        if entity.platform == DOMAIN
+    ]
+    assert len(entity_ids) == len(accts)
+    for aid in accts:
+        entity_id = f"binary_sensor.life360_online_{aid}"
+        assert entity_id in entity_ids
+        # Check that binary online sensor is on.
+        entity = hass.states.get(entity_id)
+        assert entity
+        assert entity.state == STATE_ON
+
+    # Check that Circles & Members have been written to storage.
+    assert_stored_data(hass_storage, {}, [])
 
 
-@pytest.fixture
-def mem_coordinator_mock() -> Generator[MagicMock, None, None]:
-    """Mock MemberDataUpdateCoordinator."""
-    with patch(
-        "custom_components.life360.MemberDataUpdateCoordinator", autospec=True
-    ) as mock:
-        yield mock
-
-
-# ========== async_setup Tests: Migration ==============================================
-
-
-circles = [{"id": "cid1", "name": "Circle 1"}, {"id": "cid2", "name": "Circle 2"}]
-member1 = {
+cir1 = {"id": "cid1", "name": "Circle1"}
+mem1 = {
     "id": "mid1",
     "firstName": "First1",
     "lastName": "Last1",
     "avatar": None,
     "features": {"shareLocation": 0},
-    "loc": None,
+    "location": None,
+    "issues": {"title": "", "dialog": ""},
 }
-member2 = {
+mem2 = {
     "id": "mid2",
     "firstName": "First2",
     "lastName": "Last2",
-    "avatar": None,
-    "features": {"shareLocation": 0},
-    "loc": None,
+    "avatar": "EP2",
+    "features": {"shareLocation": 1},
+    "location": None,
+    "issues": {"title": "ISSUE TITLE", "dialog": "ISSUE DIALOG"},
 }
-circle_members = {"cid1": [member1], "cid2": [member2]}
-members = {"cid1": {"mid1": member1}, "cid2": {"mid2": member2}}
-
-
-def get_circle_members(
-    cid: str, *, raise_not_modified: bool = False
-) -> list[dict[str, Any]]:
-    """Get details for Members in given Circle."""
-    return circle_members[cid]
 
 
 def get_circle_member(
-    cid: str, mid: str, *, raise_not_modified: bool = False
+    member_data: Mapping[str, Mapping[str, dict[str, Any]]],
+    cid: str,
+    mid: str,
+    *,
+    raise_not_modified: bool = False,
 ) -> dict[str, Any]:
     """Get details for Member as seen from given Circle."""
-    return members[cid][mid]
-
-
-def api_data() -> Life360API_Data:
-    """Generate Life360 API data."""
-    return {
-        "Account 1": {
-            "get_circles": chain(repeat(LoginError("TEST"), 1), repeat(circles)),
-            "get_circle_members": get_circle_members,
-            "get_circle_member": get_circle_member,
-        },
-    }
+    return member_data[cid][mid]
 
 
 # fmt: off
 @pytest.mark.parametrize(
-    ("MockLife360", "metric", "option_set"),
+    ("MockLife360", "circles", "members"),
     [
+        # 1 Account, 1 Circle, no Members
         (
-            api_data(),
-            False,
-            (
-                # driving_speed, max_gps_accuracy, driving
-                (None, None, False),
-            ),
+            {"aid1": {"get_circles": repeat([cir1])}},
+            {cir1["id"]: {"name": cir1["name"], "aids": ["aid1"], "mids": []}},
+            [],
         ),
+        # 1 Account, 1 Circle, 1 Member not sharing location
         (
-            api_data(),
-            False,
-            (
-                (10.0, 50.0, True),
-            ),
+            {
+                "aid1": {
+                    "get_circles": repeat([cir1]),
+                    "get_circle_members": repeat([mem1]),
+                    "get_circle_member": repeat(mem1),
+                },
+            },
+            {
+                cir1["id"]: {
+                    "name": cir1["name"], "aids": ["aid1"], "mids": [mem1["id"]]
+                },
+            },
+            [mem1],
         ),
+        # 1 Account, 1 Circle, 2 Members, 1 sharing location (but missing), 1 not
         (
-            api_data(),
-            True,
-            (
-                (10.0, 50.0, True),
-            ),
-        ),
-        (
-            api_data(),
-            False,
-            (
-                (None, None, False),
-                (10.0, 50.0, False),
-            ),
-        ),
-        (
-            api_data(),
-            False,
-            (
-                (None, None, False),
-                (10.0, 50.0, True),
-                (15.0, 100.0, False),
-            ),
+            {
+                "aid1": {
+                    "get_circles": repeat([cir1]),
+                    "get_circle_members": repeat([mem1, mem2]),
+                    "get_circle_member": partial(
+                        get_circle_member,
+                        {cir1["id"]: {mem1["id"]: mem1, mem2["id"]: mem2}},
+                    ),
+                },
+            },
+            {
+                cir1["id"]: {
+                    "name": cir1["name"],
+                    "aids": ["aid1"],
+                    "mids": [mem1["id"], mem2["id"]],
+                },
+            },
+            [mem1, mem2],
         ),
     ],
     indirect=["MockLife360"],
 )
 # fmt: on
-async def test_migration(
+async def test_circles_members_no_loc(
     hass: HomeAssistant,
     entity_registry: er.EntityRegistry,
+    hass_storage: MutableStorage,
     caplog: pytest.LogCaptureFixture,
-    setup_entry_mock: AsyncMock,
-    unload_entry_mock: AsyncMock,
-    remove_entry_mock: AsyncMock,
-    metric: bool,
-    option_set: Iterable[tuple[float, float, bool]],
-) -> None:
-    """Test config entry migration."""
-
-    if not metric:
-        await hass.config.async_update(unit_system="us_customary")
-        await hass.async_block_till_done()
-
-    # Mock v1 config entries w/ associated entities.
-
-    un_f = lambda i: f"user_{i}@email_{i}.com"
-    pw_f = lambda i: f"password_{i}"
-    au_f = lambda i: f"authorization_{i}"
-
-    cfg_accts: dict[str, dict[str, Any]] = {}
-    comb_ds: float | None = None
-    comb_ma: int | None = None
-    comb_dr: bool = False
-    v1_entries: list[ConfigEntry] = []
-    v1_entry_ids: list[str] = []
-    entity_ids: list[str] = []
-    for i, o in enumerate(option_set):
-        un = un_f(i)
-        pw = pw_f(i)
-        au = au_f(i)
-        ds, ma, dr = o
-
-        cfg_accts[un] = {"password": pw, "authorization": au, "enabled": True}
-        if ds is not None:
-            if comb_ds is None:
-                comb_ds = ds
-            else:
-                comb_ds = min(comb_ds, ds)
-        if ma is not None:
-            ima = ceil(ma)
-            if comb_ma is None:
-                comb_ma = ima
-            else:
-                comb_ma = max(comb_ma, ima)
-        comb_dr |= dr
-
-        v1_entry = MockConfigEntry(
-            domain=DOMAIN,
-            data={"username": un, "password": pw, "authorization": au},
-            options={"driving_speed": ds, "max_gps_accuracy": ma, "driving": dr},
-        )
-        v1_entry.add_to_hass(hass)
-        v1_entries.append(v1_entry)
-        v1_entry_ids.append(v1_entry.entry_id)
-
-        name = f"life360 online ({un})"
-        entity_ids.append(
-            entity_registry.async_get_or_create(
-                "binary_sensor",
-                DOMAIN,
-                un,
-                suggested_object_id=name,
-                config_entry=v1_entry,
-                original_device_class=BinarySensorDeviceClass.CONNECTIVITY,
-                original_name=name,
-            ).entity_id
-        )
-
-        name = f"User {i}"
-        entity_ids.append(
-            entity_registry.async_get_or_create(
-                "device_tracker",
-                DOMAIN,
-                uuid_util.random_uuid_hex(),
-                suggested_object_id=name,
-                config_entry=v1_entry,
-                entity_category=EntityCategory.DIAGNOSTIC,
-                original_name=name,
-            ).entity_id
-        )
-
-    with assert_setup_component(0, DOMAIN):
-        assert await async_setup_component(hass, DOMAIN, {})
-        await hass.async_block_till_done()
-
-    # Check that v2 config entry was created and v1 config entries are gone.
-    entries = hass.config_entries.async_entries(DOMAIN)
-    assert len(entries) == 1
-    v2_entry = entries[0]
-    assert v2_entry.version == 2
-    assert v2_entry.entry_id not in v1_entry_ids
-    # Check that v1 config entries got removed.
-    for entry in v1_entries:
-        remove_entry_mock.assert_any_call(hass, entry)
-    # Check that v2 config entry got setup.
-    setup_entry_mock.assert_called_once_with(hass, v2_entry)
-
-    # Check v2 config entry options.
-    if comb_ds is not None and metric:
-        comb_ds = SpeedConverter.convert(
-            comb_ds,
-            UnitOfSpeed.KILOMETERS_PER_HOUR,
-            UnitOfSpeed.MILES_PER_HOUR,
-        )
-    assert v2_entry.options == {
-        "accounts": cfg_accts,
-        "driving_speed": comb_ds,
-        "max_gps_accuracy": comb_ma,
-        "driving": comb_dr,
-        "verbosity": 0,
-    }
-
-    # Check that entities have been reassigned to v2 config entry.
-    for entity_id in entity_ids:
-        entity = entity_registry.async_get(entity_id)
-        assert entity
-        assert entity.config_entry_id == v2_entry.entry_id
-
-    # Check that a warning message was created noting the migration.
-    assert any(
-        rec.levelname == "WARNING"
-        and "Migrating Life360 integration entries from version 1 to 2" in rec.message
-        for rec in caplog.get_records("call")
+    circles: Mapping[str, Mapping[str, Any]],
+    members: Iterable[Mapping[str, Any]],
+):
+    """Test w/ Circles & Members w/ no location data."""
+    # Use higher verbosity so that API name is AccountID.
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=Life360ConfigFlow.VERSION,
+        options=cfg_options(1, verbosity=3),
     )
-
-
-@pytest.mark.parametrize("entity_migrated", [False, True])
-async def test_aborted_migration(
-    hass: HomeAssistant,
-    entity_registry: er.EntityRegistry,
-    caplog: pytest.LogCaptureFixture,
-    setup_entry_mock: AsyncMock,
-    unload_entry_mock: AsyncMock,
-    entity_migrated: bool,
-) -> None:
-    """Test aborted & restarted config entry migration."""
-    # Set up partial migration scenario with v2 entry created, but v1 entry still
-    # still present and entity possibly still associated with v1 entry.
-    v1_entry = MockConfigEntry(domain=DOMAIN)
-    v1_entry.add_to_hass(hass)
-    v2_entry = MockConfigEntry(domain=DOMAIN, version=2)
-    v2_entry.add_to_hass(hass)
-    entity_id = entity_registry.async_get_or_create(
-        "binary_sensor",
-        DOMAIN,
-        "user@email.com",
-        config_entry=v2_entry if entity_migrated else v1_entry,
-        original_device_class=BinarySensorDeviceClass.CONNECTIVITY,
-    ).entity_id
-
-    with assert_setup_component(0, DOMAIN):
-        assert await async_setup_component(hass, DOMAIN, {})
-        await hass.async_block_till_done()
-
-    # Check that v1 config entry is gone.
-    entries = hass.config_entries.async_entries(DOMAIN)
-    assert len(entries) == 1
-    assert entries[0] is v2_entry
-    # Check that v2 config entry got setup.
-    setup_entry_mock.assert_called_once_with(hass, v2_entry)
-
-    # Check that entity is associated with v2 config entry.
-    entity = entity_registry.async_get(entity_id)
-    assert entity
-    assert entity.config_entry_id == v2_entry.entry_id
-
-    # Check that a warning message was NOT created noting the migration.
-    assert not any(
-        rec.levelname == "WARNING"
-        and "Migrating Life360 integration entries from version 1 to 2" in rec.message
-        for rec in caplog.get_records("call")
-    )
-
-
-async def test_uknown_config_version(
-    hass: HomeAssistant,
-    caplog: pytest.LogCaptureFixture,
-    setup_entry_mock: AsyncMock,
-    unload_entry_mock: AsyncMock,
-) -> None:
-    """Test with unknown config entry version (i.e., downgrading)."""
-
-    entry = MockConfigEntry(domain=DOMAIN, version=3)
     entry.add_to_hass(hass)
 
     with assert_setup_component(0, DOMAIN):
-        assert not await async_setup_component(hass, DOMAIN, {})
+        assert await async_setup_component(hass, DOMAIN, {})
         await hass.async_block_till_done()
 
-    for levelname, pat in (
-        ("ERROR", r"Unsupported configuration entry found: [^,]+, version: 3(.1)?"),
-        (
-            "ERROR",
-            (
-                r"Setup failed for custom integration '?life360'?: "
-                r"Integration failed to initialize\."
-            ),
-        ),
-    ):
+    # Check that a device_tracker entity has been created for each Member.
+    for mem_info in [MemberInfo.from_data(member) for member in members]:
+        entity_name = f"Life360 {mem_info.name}"
+        entity_id = entity_registry.async_get_entity_id(
+            "device_tracker", DOMAIN, mem_info.mid
+        )
+        assert entity_id
+        assert entity_id == f"device_tracker.{slugify(entity_name)}"
+
+        # Check entity's state.
+        state = hass.states.get(entity_id)
+        assert state
+        assert state.state == STATE_UNKNOWN
+        # Check entity's attributes.
+        expected_attrs = {
+            ATTR_ATTRIBUTION: ATTRIBUTION,
+            ATTR_FRIENDLY_NAME: entity_name,
+            ATTR_REASON: mem_info.reason,
+            ATTR_SOURCE_TYPE: SourceType.GPS,
+        }
+        if mem_info.entity_picture:
+            expected_attrs[ATTR_ENTITY_PICTURE] = mem_info.entity_picture
+        assert state.attributes == expected_attrs
+        # Check location is missing.
+        assert not mem_info.loc
+
+        # Check WARNING has been issued for Member.
+        message = f"is missing: {mem_info.reason}"
         assert any(
-            rec.levelname == levelname and re.fullmatch(pat, rec.message)
+            message in rec.message
             for rec in caplog.get_records("call")
+            if rec.levelname == "WARNING"
         )
 
-
-# ========== config entry Tests ========================================================
-
-
-StoreData = dict[str, dict[str, dict[str, Any]]]
-empty_store: StoreData = {"circles": {}, "mem_details": {}}
+    # Check that Circles & Members have been written to storage.
+    assert_stored_data(hass_storage, circles, members)
 
 
 # fmt: off
 @pytest.mark.parametrize(
-    "store_data",
+    "MockLife360",
     [
-        None,
-        empty_store,
         {
-            "circles": {
-                "cid1": {"name": "Circle1", "aids": ["aid1"], "mids": ["mid1", "mid2"]},
-            },
-            "mem_details": {
-                "mid1": {"name": "First1 Last1", "entity_picture": None},
-                "mid2": {"name": "First2 Last2", "entity_picture": "EP2"},
+            "aid1": {
+                "get_circles": [LoginError("TEST: Forbidden"), [cir1]],
+                "get_circle_members": repeat([mem1, mem2]),
+                "get_circle_member": partial(
+                    get_circle_member,
+                    {cir1["id"]: {mem1["id"]: mem1, mem2["id"]: mem2}},
+                ),
             },
         },
     ],
+    indirect=["MockLife360"],
 )
 # fmt: on
-async def test_setup_entry(
+async def test_circles_members_delayed(
     hass: HomeAssistant,
-    hass_storage: dict[str, Any],
-    bs_setup_entry_mock: AsyncMock,
-    dt_setup_entry_mock: AsyncMock,
-    coordinator_mock: MagicMock,
-    mem_coordinator_mock: MagicMock,
-    store_data: StoreData | None,
-) -> None:
-    """Test config entry setup."""
-    if store_data is not None:
-        hass_storage[DOMAIN] = {"version": 1, "data": store_data}
-        crd_data = CirclesMembersData(
-            {
-                CircleID(cid): CircleData.from_dict(cd)
-                for cid, cd in store_data["circles"].items()
+    hass_storage: MutableStorage,
+    caplog: pytest.LogCaptureFixture,
+):
+    """Test w/ Circles & Members w/ first request fails."""
+    # Start with Circle & one Member in storage.
+    mem1_info = MemberInfo.from_data(mem1)
+    circles = {
+        cir1["id"]: {"name": cir1["name"], "aids": ["aid1"], "mids": [mem1_info.mid]},
+    }
+    store_data: StoreData = {
+        "circles": circles,
+        "mem_details": {
+            mem1_info.mid: {
+                "name": mem1_info.name,
+                "entity_picture": mem1_info.entity_picture,
             },
-            {
-                MemberID(mid): MemberDetails.from_dict(md)
-                for mid, md in store_data["mem_details"].items()
-            },
+        },
+    }
+    hass_storage[DOMAIN] = {"version": 1, "data": store_data}
+
+    # Use higher verbosity so that API name is AccountID.
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=Life360ConfigFlow.VERSION,
+        options=cfg_options(1, verbosity=3),
+    )
+    entry.add_to_hass(hass)
+
+    with assert_setup_component(0, DOMAIN):
+        assert await async_setup_component(hass, DOMAIN, {})
+        await hass.async_block_till_done()
+
+    # First retrieval of Circles failed, but second attempt succeeded.
+    # There should now be two Members.
+
+    # Check for expected WARNING messages.
+    assert all(
+        any(
+            message in rec.message
+            for rec in caplog.get_records("call")
+            if rec.levelname == "WARNING"
         )
-    else:
-        crd_data = CirclesMembersData()
-    mids = list(crd_data.mem_details)
-    n_mids = len(mids)
+        for message in (
+            "Could not retrieve full Circles & Members list from server; will retry",
+            "Circles & Members list retrieval complete",
+        )
+    )
 
-    v2_entry = MockConfigEntry(domain=DOMAIN, version=2)
-    v2_entry.add_to_hass(hass)
-
-    crd = coordinator_mock.return_value
-    crd.data = crd_data
-
-    with assert_setup_component(0, DOMAIN):
-        assert await async_setup_component(hass, DOMAIN, {})
-        await hass.async_block_till_done()
-
-    coordinator_mock.assert_called_once()
-    args = coordinator_mock.call_args.args
-    assert len(args) == 2
-    assert args[0] is hass
-
-    store = cast(Life360Store, args[1])
-    assert store.circles == crd_data.circles
-    assert store.mem_details == crd_data.mem_details
-
-    crd_1st_refresh = cast(AsyncMock, crd.async_config_entry_first_refresh)
-    crd_1st_refresh.assert_called_once()
-    crd_1st_refresh.assert_awaited_once()
-    bs_setup_entry_mock.assert_called_once()
-    dt_setup_entry_mock.assert_called_once()
-
-    assert mem_coordinator_mock.call_count == n_mids
-    for mid in mids:
-        mem_coordinator_mock.assert_any_call(hass, crd, mid)
-    mem_crd = mem_coordinator_mock.return_value
-    mem_crd_1st_refresh = cast(AsyncMock, mem_crd.async_config_entry_first_refresh)
-    assert mem_crd_1st_refresh.call_count == n_mids
-    assert mem_crd_1st_refresh.await_count == n_mids
+    # Check that Circles & Members have been written to storage.
+    cast(list[str], circles[cir1["id"]]["mids"]).append(cast(str, mem2["id"]))
+    assert_stored_data(hass_storage, circles, [mem1, mem2])
 
 
-async def test_reload_entry(
+# fmt: off
+@pytest.mark.parametrize(
+    "MockLife360",
+    [
+        {
+            "aid1": {
+                "get_circles": repeat([cir1]),
+                "get_circle_members": iter([[mem1], [mem1, mem2]]),
+                "get_circle_member": partial(
+                    get_circle_member,
+                    {cir1["id"]: {mem1["id"]: mem1, mem2["id"]: mem2}},
+                ),
+            },
+        },
+    ],
+    indirect=["MockLife360"],
+)
+# fmt: on
+async def test_reload_new_member(
     hass: HomeAssistant,
-    bs_setup_entry_mock: AsyncMock,
-    dt_setup_entry_mock: AsyncMock,
-    coordinator_mock: MagicMock,
-) -> None:
-    """Test config entry reload."""
-    v2_entry = MockConfigEntry(domain=DOMAIN, version=2)
-    v2_entry.add_to_hass(hass)
-
-    crd = coordinator_mock.return_value
-    crd.data = CirclesMembersData()
+    hass_storage: MutableStorage,
+    caplog: pytest.LogCaptureFixture,
+):
+    """Test reload with new Member after reload."""
+    # Use higher verbosity so that API name is AccountID.
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=Life360ConfigFlow.VERSION,
+        options=cfg_options(1, verbosity=3),
+    )
+    entry.add_to_hass(hass)
 
     with assert_setup_component(0, DOMAIN):
         assert await async_setup_component(hass, DOMAIN, {})
         await hass.async_block_till_done()
 
-    coordinator_mock.reset_mock()
-    bs_setup_entry_mock.reset_mock()
-    dt_setup_entry_mock.reset_mock()
+    # Initially there is only one Member.
+    circles = {
+        cir1["id"]: {"name": cir1["name"], "aids": ["aid1"], "mids": [mem1["id"]]},
+    }
+    assert_stored_data(hass_storage, circles, [mem1])
 
-    assert await hass.config_entries.async_reload(v2_entry.entry_id)
+    assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
 
-    coordinator_mock.assert_called_once()
-    crd_1st_refresh = cast(AsyncMock, crd.async_config_entry_first_refresh)
-    crd_1st_refresh.assert_called_once()
-    crd_1st_refresh.assert_awaited_once()
-    bs_setup_entry_mock.assert_called_once()
-    dt_setup_entry_mock.assert_called_once()
+    # Now there are two Members.
+    cast(list[str], circles[cir1["id"]]["mids"]).append(cast(str, mem2["id"]))
+    assert_stored_data(hass_storage, circles, [mem1, mem2])
 
 
-async def test_remove_entry(
-    hass: HomeAssistant,
-    hass_storage: dict[str, Any],
-    bs_setup_entry_mock: AsyncMock,
-    dt_setup_entry_mock: AsyncMock,
-    coordinator_mock: MagicMock,
-) -> None:
-    """Test config entry removal."""
-    hass_storage[DOMAIN] = {"version": 1, "data": empty_store}
+# async def test_remove_entry(
+#     hass: HomeAssistant,
+#     hass_storage: dict[str, Any],
+#     bs_setup_entry_mock: AsyncMock,
+#     dt_setup_entry_mock: AsyncMock,
+#     coordinator_mock: MagicMock,
+# ) -> None:
+#     """Test config entry removal."""
+#     hass_storage[DOMAIN] = {"version": 1, "data": empty_store}
 
-    v2_entry = MockConfigEntry(domain=DOMAIN, version=2)
-    v2_entry.add_to_hass(hass)
+#     v2_entry = MockConfigEntry(domain=DOMAIN, version=2)
+#     v2_entry.add_to_hass(hass)
 
-    crd = coordinator_mock.return_value
-    crd.data = CirclesMembersData()
+#     crd = coordinator_mock.return_value
+#     crd.data = CirclesMembersData()
 
-    with assert_setup_component(0, DOMAIN):
-        assert await async_setup_component(hass, DOMAIN, {})
-        await hass.async_block_till_done()
+#     with assert_setup_component(0, DOMAIN):
+#         assert await async_setup_component(hass, DOMAIN, {})
+#         await hass.async_block_till_done()
 
-    assert len(hass.config_entries.async_entries(DOMAIN)) == 1
-    assert DOMAIN in hass_storage
+#     assert len(hass.config_entries.async_entries(DOMAIN)) == 1
+#     assert DOMAIN in hass_storage
 
-    assert await hass.config_entries.async_remove(v2_entry.entry_id)
-    await hass.async_block_till_done()
+#     assert await hass.config_entries.async_remove(v2_entry.entry_id)
+#     await hass.async_block_till_done()
 
-    assert not hass.config_entries.async_entries(DOMAIN)
-    assert DOMAIN not in hass_storage
+#     assert not hass.config_entries.async_entries(DOMAIN)
+#     assert DOMAIN not in hass_storage

@@ -21,8 +21,8 @@ def auto_enable_custom_integrations(enable_custom_integrations):
     return
 
 
-# {API_Name: {Method: [ReturnData] | func}}
 Life360API_SideEffect = Iterable[Any] | Callable[..., Any]
+# {API_Name: {Method: [ReturnData] | func}}
 Life360API_Data = Mapping[str | None, Mapping[str, Life360API_SideEffect]]
 
 

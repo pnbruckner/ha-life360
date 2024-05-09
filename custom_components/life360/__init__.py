@@ -181,9 +181,7 @@ async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
     @callback
     def update_location(call: ServiceCall) -> None:
         """Request Member location update."""
-        async_dispatcher_send(
-            hass, SIGNAL_UPDATE_LOCATION, call.data[CONF_ENTITY_ID]
-        )
+        async_dispatcher_send(hass, SIGNAL_UPDATE_LOCATION, call.data[CONF_ENTITY_ID])
 
     hass.services.async_register(
         DOMAIN, SERVICE_UPDATE_LOCATION, update_location, _UPDATE_LOCATION_SCHEMA
