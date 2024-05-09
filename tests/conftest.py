@@ -9,6 +9,7 @@ from typing import Any, cast
 from unittest.mock import MagicMock, NonCallableMagicMock, patch
 
 from aiohttp import ClientSession
+import custom_components.life360.helpers
 from life360 import Life360
 import pytest
 
@@ -19,6 +20,28 @@ pytest_plugins = ["pytest_homeassistant_custom_component"]
 def auto_enable_custom_integrations(enable_custom_integrations):
     """Enable custom integrations."""
     return
+
+
+@pytest.fixture(autouse=True)
+def MockStoreWorkAround() -> Generator[None, None, None]:
+    """Work around broken hass_storage in old pytest_homeassistant_custom_component."""
+    # Versions before 0.13.54 did not use default encoder, so sets did not get converted
+    # to lists, causing a JSON serialization error that was not caught. Work around the
+    # problem by converting the sets to lists before writing.
+
+    async def save(self: custom_components.life360.helpers.Life360Store) -> None:
+        """Convert sets to lists in data to save."""
+        data: dict[str, dict[str, dict[str, Any]]] = self.data.as_dict()
+        for circle in data["circles"].values():
+            circle["aids"] = list(circle["aids"])
+            circle["mids"] = list(circle["mids"])
+        await self._store.async_save(data)
+
+    with patch.object(
+        custom_components.life360.helpers.Life360Store, "save", autospec=True
+    ) as mock:
+        mock.side_effect = save
+        yield
 
 
 Life360API_SideEffect = Iterable[Any] | Callable[..., Any]
