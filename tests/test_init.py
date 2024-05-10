@@ -9,20 +9,32 @@ import re
 from typing import Any, Self, cast
 
 from custom_components.life360.config_flow import Life360ConfigFlow
-from custom_components.life360.const import ATTR_REASON, ATTRIBUTION, DOMAIN
+from custom_components.life360.const import (
+    ATTR_REASON,
+    ATTRIBUTION,
+    DOMAIN,
+    UPDATE_INTERVAL,
+)
+from custom_components.life360.helpers import AccountID, ConfigOptions, MemberID
 from life360 import LoginError
 import pytest
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     assert_setup_component,
+    async_fire_time_changed,
 )
 
 from homeassistant.components.binary_sensor import DOMAIN as BS_DOMAIN
-from homeassistant.components.device_tracker import ATTR_SOURCE_TYPE, SourceType
+from homeassistant.components.device_tracker import (
+    ATTR_SOURCE_TYPE,
+    DOMAIN as DT_DOMAIN,
+    SourceType,
+)
 from homeassistant.const import (
     ATTR_ATTRIBUTION,
     ATTR_ENTITY_PICTURE,
     ATTR_FRIENDLY_NAME,
+    STATE_OFF,
     STATE_ON,
     STATE_UNKNOWN,
 )
@@ -31,7 +43,7 @@ from homeassistant.helpers import entity_registry as er, issue_registry as ir
 from homeassistant.setup import async_setup_component
 from homeassistant.util import slugify
 
-from .common import assert_log_messages
+from .common import DtNowMock, assert_log_messages
 
 StoreData = Mapping[str, Mapping[str, Mapping[str, Any]]]
 MutableStoreData = MutableMapping[str, MutableMapping[str, MutableMapping[str, Any]]]
@@ -171,9 +183,9 @@ async def test_no_circles_members(
         entity_id = f"binary_sensor.life360_online_{aid}"
         assert entity_id in entity_ids
         # Check that binary online sensor is on.
-        entity = hass.states.get(entity_id)
-        assert entity
-        assert entity.state == STATE_ON
+        state = hass.states.get(entity_id)
+        assert state
+        assert state.state == STATE_ON
 
     # Check that Circles & Members have been written to storage.
     assert_stored_data(hass_storage, {}, [])
@@ -286,11 +298,9 @@ async def test_circles_members_no_loc(
     # Check that a device_tracker entity has been created for each Member.
     for mem_info in [MemberInfo.from_data(member) for member in members]:
         expected_entity_name = f"Life360 {mem_info.name}"
-        expected_entity_id = f"device_tracker.{slugify(expected_entity_name)}"
+        expected_entity_id = f"{DT_DOMAIN}.{slugify(expected_entity_name)}"
 
-        entity_id = entity_registry.async_get_entity_id(
-            "device_tracker", DOMAIN, mem_info.mid
-        )
+        entity_id = entity_registry.async_get_entity_id(DT_DOMAIN, DOMAIN, mem_info.mid)
         assert entity_id
         assert entity_id == expected_entity_id
 
@@ -322,7 +332,6 @@ async def test_circles_members_no_loc(
     assert_stored_data(hass_storage, circles, members)
 
 
-# fmt: off
 @pytest.mark.parametrize(
     "MockLife360",
     [
@@ -339,7 +348,6 @@ async def test_circles_members_no_loc(
     ],
     indirect=["MockLife360"],
 )
-# fmt: on
 async def test_circles_members_delayed(
     hass: HomeAssistant,
     hass_storage: MutableStorage,
@@ -393,7 +401,6 @@ async def test_circles_members_delayed(
     assert_stored_data(hass_storage, circles, [mem1, mem2])
 
 
-# fmt: off
 @pytest.mark.parametrize(
     "MockLife360",
     [
@@ -410,7 +417,6 @@ async def test_circles_members_delayed(
     ],
     indirect=["MockLife360"],
 )
-# fmt: on
 async def test_reload_new_member(hass: HomeAssistant, hass_storage: MutableStorage):
     """Test reload with new Member after reload."""
     # Use higher verbosity so that API name is AccountID.
@@ -442,7 +448,6 @@ async def test_reload_new_member(hass: HomeAssistant, hass_storage: MutableStora
 LOGIN_ERROR_MESSAGE = "TEST: Login error"
 
 
-# fmt: off
 @pytest.mark.parametrize(
     "MockLife360",
     [
@@ -450,20 +455,24 @@ LOGIN_ERROR_MESSAGE = "TEST: Login error"
             "aid1": {
                 "get_circles": repeat([cir1]),
                 "get_circle_members": repeat([mem1]),
-                "get_circle_member": repeat(LoginError(LOGIN_ERROR_MESSAGE)),
+                "get_circle_member": iter(
+                    [mem1, LoginError(LOGIN_ERROR_MESSAGE), mem1]
+                ),
             },
         },
     ],
     indirect=["MockLife360"],
 )
-# fmt: on
 async def test_login_error(
     hass: HomeAssistant,
     entity_registry: er.EntityRegistry,
     issue_registry: ir.IssueRegistry,
     caplog: pytest.LogCaptureFixture,
+    dt_now: DtNowMock,
 ):
     """Test login error while getting Member data."""
+    dt_now_real, dt_now_mock = dt_now
+
     # Use higher verbosity so that API name is AccountID.
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -476,18 +485,64 @@ async def test_login_error(
         assert await async_setup_component(hass, DOMAIN, {})
         await hass.async_block_till_done()
 
+    aid = AccountID("aid1")
+    mid = MemberID(cast(str, mem1["id"]))
+
+    # Check that account binary online sensor exists and is on.
+    bs_entity_id = entity_registry.async_get_entity_id(BS_DOMAIN, DOMAIN, aid)
+    assert bs_entity_id
+    state = hass.states.get(bs_entity_id)
+    assert state
+    assert state.state == STATE_ON
+
+    # Check that device_tracker exists and is unknown.
+    dt_entity_id = entity_registry.async_get_entity_id(DT_DOMAIN, DOMAIN, mid)
+    assert dt_entity_id
+    state = hass.states.get(dt_entity_id)
+    assert state
+    assert state.state == STATE_UNKNOWN
+
+    # Advance "time" so Member coordinator will update.
+    now = dt_now_real() + UPDATE_INTERVAL
+    dt_now_mock.return_value = now
+    async_fire_time_changed(hass, now)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    # Check that account was disabled.
+    options = ConfigOptions.from_dict(entry.options)
+    assert not options.accounts[aid].enabled
+
     # Check that an ERROR message was issued.
-    pat = re.compile(rf"aid1: while getting data for .*: {LOGIN_ERROR_MESSAGE}.*")
+    pat = re.compile(rf"{aid}: while getting data for .*: {LOGIN_ERROR_MESSAGE}.*")
     assert_log_messages(caplog, ((1, "ERROR", pat),))
+
     # Check that repair issue was created for account.
-    issue = issue_registry.async_get_issue(DOMAIN, "aid1")
+    issue = issue_registry.async_get_issue(DOMAIN, aid)
     assert issue
     assert not issue.is_fixable and issue.is_persistent
     assert issue.active and issue.severity == ir.IssueSeverity.ERROR
 
     # Check that account binary online sensor exists and is off.
-    entity_id = entity_registry.async_get_entity_id(BS_DOMAIN, DOMAIN, "aid1")
-    assert entity_id
+    state = hass.states.get(bs_entity_id)
+    assert state
+    assert state.state == STATE_OFF
+
+    # Check that device_tracker exists and is unknown.
+    state = hass.states.get(dt_entity_id)
+    assert state
+    assert state.state == STATE_UNKNOWN
+
+    # Simulate "fixing" error by re-enabling account.
+    # NOTE: This will not remove repair issue. That is done by config flow and will be
+    #       checked in config flow tests.
+    options.accounts[aid].enabled = True
+    hass.config_entries.async_update_entry(entry, options=options.as_dict())
+    await hass.async_block_till_done()
+
+    # Check that account binary online sensor exists and is on.
+    state = hass.states.get(bs_entity_id)
+    assert state
+    assert state.state == STATE_ON
 
 
 # async def test_remove_entry(

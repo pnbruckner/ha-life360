@@ -1,10 +1,14 @@
 """Life360 common test functions."""
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from datetime import datetime
 import re
+from unittest.mock import MagicMock
 
 import pytest
+
+DtNowMock = tuple[Callable[..., datetime], MagicMock]
 
 
 def assert_log_messages(

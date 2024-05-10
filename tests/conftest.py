@@ -13,6 +13,10 @@ import custom_components.life360.helpers
 from life360 import Life360
 import pytest
 
+from homeassistant.util import dt as dt_util
+
+from .common import DtNowMock
+
 pytest_plugins = ["pytest_homeassistant_custom_component"]
 
 
@@ -42,6 +46,14 @@ def MockStoreWorkAround() -> Generator[None, None, None]:
     ) as mock:
         mock.side_effect = save
         yield
+
+
+@pytest.fixture
+def dt_now() -> Generator[DtNowMock, None, None]:
+    """Mock util.dt.now."""
+    real = dt_util.now
+    with patch("homeassistant.util.dt.now", autospec=True) as mock:
+        yield real, mock
 
 
 Life360API_SideEffect = Iterable[Any] | Callable[..., Any]

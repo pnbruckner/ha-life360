@@ -395,6 +395,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
         warned = False
 
         failed_task = self._acct_data[aid].failed_task
+        request_task: asyncio.Task[_R] | None = None
         try:
             while True:
                 if delay is not None:
@@ -421,20 +422,23 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                     [failed_task, request_task], return_when=asyncio.FIRST_COMPLETED
                 )
                 if failed_task in done:
-                    request_task.cancel()
+                    (rt := request_task).cancel()
+                    request_task = None
                     with suppress(asyncio.CancelledError, Life360Error):
-                        await request_task
+                        await rt
                     return RequestError.NO_DATA
 
                 try:
                     # if aid == "federicktest95@gmail.com":
                     #     self._requests += 1
                     #     if self._requests == 1:
-                    #         request_task.cancel()
+                    #         (rt := request_task).cancel()
+                    #         request_task = None
                     #         with suppress(BaseException):
-                    #             await request_task
+                    #             await rt
                     #         raise LoginError("TEST TEST TEST")
                     result = await request_task
+                    request_task = None
                     self._set_acct_exc(aid)
                     return result
                 except NotModified:
@@ -465,6 +469,12 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                     )
                     self._set_acct_exc(aid, not treat_as_error, msg, exc)
                     return RequestError.NO_DATA
+        except asyncio.CancelledError:
+            if request_task:
+                request_task.cancel()
+                with suppress(asyncio.CancelledError, Life360Error):
+                    await request_task
+            raise
         finally:
             if warned:
                 _LOGGER.warning("Done trying to get response from Life360 for %s", aid)
