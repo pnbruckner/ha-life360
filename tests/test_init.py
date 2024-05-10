@@ -506,7 +506,10 @@ async def test_login_error(
     now = dt_now_real() + UPDATE_INTERVAL
     dt_now_mock.return_value = now
     async_fire_time_changed(hass, now)
-    await hass.async_block_till_done(wait_background_tasks=True)
+    try:
+        await hass.async_block_till_done(wait_background_tasks=True)
+    except TypeError:
+        await hass.async_block_till_done()
 
     # Check that account was disabled.
     options = ConfigOptions.from_dict(entry.options)
