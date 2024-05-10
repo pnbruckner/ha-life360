@@ -5,6 +5,7 @@ from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from functools import partial
 from itertools import repeat
+import re
 from typing import Any, Self, cast
 
 from custom_components.life360.config_flow import Life360ConfigFlow
@@ -16,6 +17,7 @@ from pytest_homeassistant_custom_component.common import (
     assert_setup_component,
 )
 
+from homeassistant.components.binary_sensor import DOMAIN as BS_DOMAIN
 from homeassistant.components.device_tracker import ATTR_SOURCE_TYPE, SourceType
 from homeassistant.const import (
     ATTR_ATTRIBUTION,
@@ -25,9 +27,11 @@ from homeassistant.const import (
     STATE_UNKNOWN,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import entity_registry as er, issue_registry as ir
 from homeassistant.setup import async_setup_component
 from homeassistant.util import slugify
+
+from .common import assert_log_messages
 
 StoreData = Mapping[str, Mapping[str, Mapping[str, Any]]]
 MutableStoreData = MutableMapping[str, MutableMapping[str, MutableMapping[str, Any]]]
@@ -145,23 +149,15 @@ async def test_no_circles_members(
         await hass.async_block_till_done()
 
     # Check WARNING messages.
-    messages = dict.fromkeys(
-        (
-            "Could not load Circles & Members from storage"
-            "; will wait for data from server",
-            "Circles & Members list retrieval complete",
-        ),
-        False,
+    expected = 1 if store_data is None else 0
+    message1 = (
+        "Could not load Circles & Members from storage; will wait for data from server"
     )
-    for rec in caplog.get_records("call"):
-        if rec.levelname != "WARNING":
-            continue
-        if rec.message in messages:
-            messages[rec.message] = True
-    if store_data is None:
-        assert all(messages.values())
-    else:
-        assert not any(messages.values())
+    messages = (
+        (expected, "WARNING", message1),
+        (expected, "WARNING", "Circles & Members list retrieval complete"),
+    )
+    assert_log_messages(caplog, messages)
 
     # Check that only binary online sensors were created, one per account.
     accts = cast(dict[str, Any], options["accounts"])
@@ -289,12 +285,14 @@ async def test_circles_members_no_loc(
 
     # Check that a device_tracker entity has been created for each Member.
     for mem_info in [MemberInfo.from_data(member) for member in members]:
-        entity_name = f"Life360 {mem_info.name}"
+        expected_entity_name = f"Life360 {mem_info.name}"
+        expected_entity_id = f"device_tracker.{slugify(expected_entity_name)}"
+
         entity_id = entity_registry.async_get_entity_id(
             "device_tracker", DOMAIN, mem_info.mid
         )
         assert entity_id
-        assert entity_id == f"device_tracker.{slugify(entity_name)}"
+        assert entity_id == expected_entity_id
 
         # Check entity's state.
         state = hass.states.get(entity_id)
@@ -303,7 +301,7 @@ async def test_circles_members_no_loc(
         # Check entity's attributes.
         expected_attrs = {
             ATTR_ATTRIBUTION: ATTRIBUTION,
-            ATTR_FRIENDLY_NAME: entity_name,
+            ATTR_FRIENDLY_NAME: expected_entity_name,
             ATTR_REASON: mem_info.reason,
             ATTR_SOURCE_TYPE: SourceType.GPS,
         }
@@ -314,12 +312,11 @@ async def test_circles_members_no_loc(
         assert not mem_info.loc
 
         # Check WARNING has been issued for Member.
-        message = f"is missing: {mem_info.reason}"
-        assert any(
-            message in rec.message
-            for rec in caplog.get_records("call")
-            if rec.levelname == "WARNING"
+        pat = re.compile(
+            rf"Location data for {expected_entity_name} \({expected_entity_id}\)"
+            rf" is missing: {mem_info.reason}"
         )
+        assert_log_messages(caplog, ((1, "WARNING", pat),))
 
     # Check that Circles & Members have been written to storage.
     assert_stored_data(hass_storage, circles, members)
@@ -381,17 +378,15 @@ async def test_circles_members_delayed(
     # There should now be two Members.
 
     # Check for expected WARNING messages.
-    assert all(
-        any(
-            message in rec.message
-            for rec in caplog.get_records("call")
-            if rec.levelname == "WARNING"
-        )
-        for message in (
+    messages = (
+        (
+            1,
+            "WARNING",
             "Could not retrieve full Circles & Members list from server; will retry",
-            "Circles & Members list retrieval complete",
-        )
+        ),
+        (1, "WARNING", "Circles & Members list retrieval complete"),
     )
+    assert_log_messages(caplog, messages)
 
     # Check that Circles & Members have been written to storage.
     cast(list[str], circles[cir1["id"]]["mids"]).append(cast(str, mem2["id"]))
@@ -416,11 +411,7 @@ async def test_circles_members_delayed(
     indirect=["MockLife360"],
 )
 # fmt: on
-async def test_reload_new_member(
-    hass: HomeAssistant,
-    hass_storage: MutableStorage,
-    caplog: pytest.LogCaptureFixture,
-):
+async def test_reload_new_member(hass: HomeAssistant, hass_storage: MutableStorage):
     """Test reload with new Member after reload."""
     # Use higher verbosity so that API name is AccountID.
     entry = MockConfigEntry(
@@ -446,6 +437,57 @@ async def test_reload_new_member(
     # Now there are two Members.
     cast(list[str], circles[cir1["id"]]["mids"]).append(cast(str, mem2["id"]))
     assert_stored_data(hass_storage, circles, [mem1, mem2])
+
+
+LOGIN_ERROR_MESSAGE = "TEST: Login error"
+
+
+# fmt: off
+@pytest.mark.parametrize(
+    "MockLife360",
+    [
+        {
+            "aid1": {
+                "get_circles": repeat([cir1]),
+                "get_circle_members": repeat([mem1]),
+                "get_circle_member": repeat(LoginError(LOGIN_ERROR_MESSAGE)),
+            },
+        },
+    ],
+    indirect=["MockLife360"],
+)
+# fmt: on
+async def test_login_error(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    issue_registry: ir.IssueRegistry,
+    caplog: pytest.LogCaptureFixture,
+):
+    """Test login error while getting Member data."""
+    # Use higher verbosity so that API name is AccountID.
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=Life360ConfigFlow.VERSION,
+        options=cfg_options(1, verbosity=3),
+    )
+    entry.add_to_hass(hass)
+
+    with assert_setup_component(0, DOMAIN):
+        assert await async_setup_component(hass, DOMAIN, {})
+        await hass.async_block_till_done()
+
+    # Check that an ERROR message was issued.
+    pat = re.compile(rf"aid1: while getting data for .*: {LOGIN_ERROR_MESSAGE}.*")
+    assert_log_messages(caplog, ((1, "ERROR", pat),))
+    # Check that repair issue was created for account.
+    issue = issue_registry.async_get_issue(DOMAIN, "aid1")
+    assert issue
+    assert not issue.is_fixable and issue.is_persistent
+    assert issue.active and issue.severity == ir.IssueSeverity.ERROR
+
+    # Check that account binary online sensor exists and is off.
+    entity_id = entity_registry.async_get_entity_id(BS_DOMAIN, DOMAIN, "aid1")
+    assert entity_id
 
 
 # async def test_remove_entry(

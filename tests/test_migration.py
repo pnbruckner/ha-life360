@@ -24,6 +24,12 @@ from homeassistant.setup import async_setup_component
 from homeassistant.util import uuid as uuid_util
 from homeassistant.util.unit_conversion import SpeedConverter
 
+from .common import assert_log_messages
+
+MIGRATION_MESSAGE = "Migrating Life360 integration entries from version 1 to " + str(
+    Life360ConfigFlow.VERSION
+)
+
 # ========== Fixtures ==================================================================
 
 
@@ -220,13 +226,7 @@ async def test_migration_v1(
         assert entity.config_entry_id == new_entry.entry_id
 
     # Check that a warning message was created noting the migration.
-    message = "Migrating Life360 integration entries from version 1 to " + str(
-        Life360ConfigFlow.VERSION
-    )
-    assert any(
-        rec.levelname == "WARNING" and message in rec.message
-        for rec in caplog.get_records("call")
-    )
+    assert_log_messages(caplog, ((1, "WARNING", MIGRATION_MESSAGE),))
 
 
 @pytest.mark.parametrize("entity_migrated", [False, True])
@@ -273,13 +273,7 @@ async def test_aborted_migration_v1(
     assert entity.config_entry_id == new_entry.entry_id
 
     # Check that a warning message was NOT created noting the migration.
-    message = "Migrating Life360 integration entries from version 1 to " + str(
-        Life360ConfigFlow.VERSION
-    )
-    assert not any(
-        rec.levelname == "WARNING" and message in rec.message
-        for rec in caplog.get_records("call")
-    )
+    assert_log_messages(caplog, ((0, "WARNING", MIGRATION_MESSAGE),))
 
 
 async def test_uknown_config_version(
@@ -289,31 +283,19 @@ async def test_uknown_config_version(
     unload_entry_mock: AsyncMock,
 ) -> None:
     """Test with unknown config entry version (i.e., downgrading)."""
-    unknown_version = Life360ConfigFlow.VERSION + 1
-    entry = MockConfigEntry(domain=DOMAIN, version=unknown_version)
+    bad_vers = Life360ConfigFlow.VERSION + 1
+    entry = MockConfigEntry(domain=DOMAIN, version=bad_vers)
     entry.add_to_hass(hass)
 
     with assert_setup_component(0, DOMAIN):
         assert not await async_setup_component(hass, DOMAIN, {})
         await hass.async_block_till_done()
 
-    for levelname, pat in (
-        (
-            "ERROR",
-            (
-                r"Unsupported configuration entry found: [^,]+, "
-                rf"version: {unknown_version}(.1)?"
-            ),
-        ),
-        (
-            "ERROR",
-            (
-                r"Setup failed for custom integration '?life360'?: "
-                r"Integration failed to initialize\."
-            ),
-        ),
-    ):
-        assert any(
-            rec.levelname == levelname and re.fullmatch(pat, rec.message)
-            for rec in caplog.get_records("call")
-        )
+    pat1 = re.compile(
+        rf"Unsupported configuration entry found: [^,]+, version: {bad_vers}(.1)?"
+    )
+    pat2 = re.compile(
+        r"Setup failed for custom integration '?life360'?"
+        r": Integration failed to initialize\."
+    )
+    assert_log_messages(caplog, ((1, "ERROR", pat1), (1, "ERROR", pat2)))

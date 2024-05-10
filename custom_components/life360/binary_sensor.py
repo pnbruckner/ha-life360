@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from functools import partial
+from functools import cached_property, partial
 import logging
 from typing import cast
 
@@ -37,7 +37,7 @@ async def async_setup_entry(
     async def process_config(hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Add and/or remove binary online sensors."""
         options = ConfigOptions.from_dict(entry.options)
-        aids = {aid for aid, acct in options.accounts.items() if acct.enabled}
+        aids = set(options.accounts)
         cur_aids = set(entities)
         del_aids = cur_aids - aids
         add_aids = aids - cur_aids
@@ -72,11 +72,29 @@ class Life360BinarySensor(BinarySensorEntity):
         """Initialize binary sensor."""
         self._attr_name = f"Life360 online ({aid})"
         self._attr_unique_id = aid
+        self._enabled = (
+            ConfigOptions.from_dict(coordinator.config_entry.options)
+            .accounts[aid]
+            .enabled
+        )
         self._online = partial(coordinator.acct_online, aid)
+
+        self.async_on_remove(
+            coordinator.config_entry.add_update_listener(
+                self._async_config_entry_updated
+            )
+        )
+
+    @cached_property
+    def aid(self) -> AccountID:
+        """Return account ID."""
+        return cast(AccountID, self.unique_id)
 
     @property
     def is_on(self) -> bool:
         """Return if account is online."""
+        if not self._enabled:
+            return False
         return self._online()
 
     async def async_added_to_hass(self) -> None:
@@ -85,9 +103,20 @@ class Life360BinarySensor(BinarySensorEntity):
         @callback
         def write_state(aid: AccountID) -> None:
             """Write state if account status was updated."""
-            if aid == cast(AccountID, self._attr_unique_id):
+            if aid == self.aid:
                 self.async_write_ha_state()
 
         self.async_on_remove(
             async_dispatcher_connect(self.hass, SIGNAL_ACCT_STATUS, write_state)
         )
+
+    async def _async_config_entry_updated(
+        self, _: HomeAssistant, entry: ConfigEntry
+    ) -> None:
+        """Run when the config entry has been updated."""
+        enabled = ConfigOptions.from_dict(entry.options).accounts[self.aid].enabled
+        if enabled == self._enabled:
+            return
+
+        self._enabled = enabled
+        self.async_write_ha_state()
