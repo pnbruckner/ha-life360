@@ -548,31 +548,45 @@ async def test_login_error(
     assert state.state == STATE_ON
 
 
-# async def test_remove_entry(
-#     hass: HomeAssistant,
-#     hass_storage: dict[str, Any],
-#     bs_setup_entry_mock: AsyncMock,
-#     dt_setup_entry_mock: AsyncMock,
-#     coordinator_mock: MagicMock,
-# ) -> None:
-#     """Test config entry removal."""
-#     hass_storage[DOMAIN] = {"version": 1, "data": empty_store}
+async def test_remove_entry(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    hass_storage: MutableStorage,
+) -> None:
+    """Test config entry removal."""
+    hass_storage[DOMAIN] = {"version": 1, "data": empty_store}
 
-#     v2_entry = MockConfigEntry(domain=DOMAIN, version=2)
-#     v2_entry.add_to_hass(hass)
+    # Use higher verbosity so that API name is AccountID.
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=Life360ConfigFlow.VERSION,
+        options=cfg_options(1, verbosity=3),
+    )
+    entry.add_to_hass(hass)
 
-#     crd = coordinator_mock.return_value
-#     crd.data = CirclesMembersData()
+    with assert_setup_component(0, DOMAIN):
+        assert await async_setup_component(hass, DOMAIN, {})
+        await hass.async_block_till_done()
 
-#     with assert_setup_component(0, DOMAIN):
-#         assert await async_setup_component(hass, DOMAIN, {})
-#         await hass.async_block_till_done()
+    # Check that account binary online sensor exists and is on.
+    bs_entity_id = entity_registry.async_get_entity_id(BS_DOMAIN, DOMAIN, "aid1")
+    assert bs_entity_id
+    state = hass.states.get(bs_entity_id)
+    assert state
+    assert state.state == STATE_ON
 
-#     assert len(hass.config_entries.async_entries(DOMAIN)) == 1
-#     assert DOMAIN in hass_storage
+    # Check that config entry & storage exist.
+    assert len(hass.config_entries.async_entries(DOMAIN)) == 1
+    assert DOMAIN in hass_storage
 
-#     assert await hass.config_entries.async_remove(v2_entry.entry_id)
-#     await hass.async_block_till_done()
+    # Remove config entry.
+    assert await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
 
-#     assert not hass.config_entries.async_entries(DOMAIN)
-#     assert DOMAIN not in hass_storage
+    # Check that binary online sensor is gone.
+    state = hass.states.get(bs_entity_id)
+    assert state is None
+
+    # Check that config entry & storage are gone.
+    assert not hass.config_entries.async_entries(DOMAIN)
+    assert DOMAIN not in hass_storage
