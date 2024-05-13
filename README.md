@@ -1,11 +1,7 @@
-# ha-life360
-Test project for significant changes to the Home Assistant [Life360](https://www.home-assistant.io/integrations/life360) integration
+# <img src="https://brands.home-assistant.io/life360/icon.png" alt="Life360" width="50" height="50"/> Life360
 
-## Overview
-
-This project provides a way for willing users to try out significant changes to the integration
-before I submit them officially, and possibly affect many users with potential issues I didn't foresee.
-It would be great to get feedback from real world usage. If you're willing, read on...
+A [Home Assistant](https://www.home-assistant.io/) integration for Life360.
+Creates Device Tracker (`device_tracker`) entities to show where Life360 Members are located.
 
 ## Current Changes / Improvements
 
@@ -15,76 +11,133 @@ However, since that time, a better understanding of the (undocumented & unsuppor
 This custom integration is now able to use the API again.
 It's, of course, yet to be seen if it will continue to work.
 
+## Installation
+
+The integration software must first be installed as a custom component.
+
+You can use HACS to manage the installation and provide update notifications:
+
+<details>
+<summary>With HACS</summary>
+
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/)
+
+1. Add this repo as a [custom repository](https://hacs.xyz/docs/faq/custom_repositories/).
+   It should then appear as a new integration. Click on it. If necessary, search for "life360".
+
+   ```text
+   https://github.com/pnbruckner/ha-life360
+   ```
+   Or use this button:
+   
+   [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=pnbruckner&repository=ha-life360&category=integration)
+
+
+1. Download the integration using the appropriate button.
+
+</details>
+
+Or you can manually install the software:
+
+<details>
+<summary>Manual Installation</summary>
+
+Place a copy of the files from [`custom_components/life360`](custom_components/life360)
+in `<config>/custom_components/life360`,
+where `<config>` is your Home Assistant configuration directory.
+
+>__NOTE__: When downloading, make sure to use the `Raw` button from each file's page.
+
+</details>
+
+>__NOTE__: After it has been downloaded you will need to restart Home Assistant.
+
+## Configuration
+### Add Integration Entry
+
+After installation a Life360 integration entry must be added to Home Assistant.
+This only needs to be done once.
+
+Use this My Button:
+
+[![add integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start?domain=life360)
+
+Alternatively, go to Settings -> Devices & services and click the **`+ ADD INTEGRATION`** button.
+Find or search for "Life360", click on it, then follow the prompts.
+
+### Configuration Options
+#### Max GPS Accuracy
+
+Each location update has a GPS accuracy value (see the entity's corresponding attribute.)
+You can think of each update as a circle whose center is defined by latitude & longitude,
+and whose radius is defined by the accuracy value,
+where the actual location of the device is somewhere within that circle.
+The _higher_ the accuracy value, the _larger_ the circle where the device may be,
+therefore the _less_ accurate the location fix.
+
+This configuration option can be used to reject location updates that are _less_ accurate
+(i.e., have _larger_ accuracy values) than the entered value (in meters.)
+
+#### Driving Speed Threshold
+
+The Life360 server indicates when it considers the device is moving at driving speeds.
+However, this value does not always seem to be as expected.
+This value can be overridden by providing a speed, at which or above, the entity's `driving` attribute should be true.
+
+#### Show Driving as State
+
+If enabled, and the device is determined to be at or above driving speed,
+the state of the entity will be set to "Driving", assuming it is not within a Home Assistant Zone.
+
+#### DEBUG Message Verbosity
+
+If the user's profile has "advanced mode" enabled, then this configuration option will appear.
+It can be used to adjust how much debug information should be written to the system log,
+assuming debug has been enabled for the Life360 integration.
+
+### Life360 Accounts
+
+At least one Life360 account must be entered, although more may be entered if desired.
+The integration will look for Life360 Members in all the Circles that can be seen by the entered account(s).
+
+#### Account Authorization Methods
+
+There are currently two methods supported for authorizing the Life360 integration to rerieve data associated with a Life360 account.
+
+##### Username & Password
+
+This method can be used with any Life360 account that has not had a phone number "verified."
+Once a phone number has been verified, the Life360 server will no longer allow this authorization method.
+
+Enter the Life360 account's email address & password.
+
+##### Access Type & Token
+
+This method is effectively a work around for accounts that have had a phone number "verified."
+In theory, there is a way to "login" to the Life360 server using a phone number and a code sent via SMS.
+However, I have not been able to get that to work.
+
+Go to https://life360.com/login.
+Open the browser's Developer Tools sidebar & go to the Network tab.
+Make sure recording is enabled.
+Log into Life360.
+When the process has been completed look for the "token" packet.
+(If there is one labeled "preflight", uses the OPTIONS method, or has no preview/response data,
+ignore it and look for another "token" packet which uses the POST method and has data.)
+Under the Preview or Response tab, look for `token_type` & `access_token`.
+Copy those values into the corresponding boxes (access type & access token) on the HA account page.
+(Note that the `token_type` is almost certainly "Bearer".)
+You can put whatever you want in the "Account identifier" box.
+
 ## Versions
 
 Home Assistant 2023.8 or newer is currently supported.
 
-## Installation
-
-In theory this can be installed using [HACS](https://hacs.xyz/) as a [custom repository](https://hacs.xyz/docs/faq/custom_repositories/).
-Or you can manually install it.
-
-Basically you need to get all of the files & folders in [custom_components/life360](custom_components/life360)
-into a similarly named folder in your Home Assistant configuration folder. If you've never done that and are
-not sure how, see some [suggestions below](#installation-suggestions), or feel free to ask me for help, either via the
-[Home Assistant Forum](https://community.home-assistant.io/u/pnbruckner/summary) or by opening an
-[issue here](https://github.com/pnbruckner/ha-life360/issues).
-
-Once this custom integration is installed it will be used instead of the built-in integration (which, of course, does not exist at this time.)
-
 ## Services
 
-A new service, `life360.update_location`, can be used to request a location update for one or more Members.
+### `life360.update_location`
+
+Can be used to request a location update for one or more Members.
 Once this service is called, the Member's location will typically be updated every five seconds for about one minute.
 The service takes one parameters, `entity_id`, which can be a single entity ID, a list of entity ID's, or the word "all" (which means all Life360 trackers.)
 The use of the `target` parameter should also work.
-
-## PLEASE REMEMBER TO GIVE ME FEEDBACK & THANK YOU!
-
-Which you can do either via the [Home Assistant Forum](https://community.home-assistant.io/t/life360-conversion-to-entity-based-device-tracker-testers-needed/422454)
-or by opening an [issue here](https://github.com/pnbruckner/ha-life360/issues)
-
-## Manual installation suggestions
-
-### Download zip file from github
-
-At the top of this page, click on the Code button and pick the "Download ZIP" option at the bottom.
-This will download the entire project. Unzip it, and copy the `life360` foler into the `custom_components`
-folder in your Home Assistant configuration directory.
-
-### Use svn export
-
-If you do not have subversion, you can install it using `sudo apt install subversion`.
-
-`cd` into the `custom_components` folder in your Home Assistant configuration directory.
-Enter the following command:
-
-```
-svn export https://github.com/pnbruckner/ha-life360/trunk/custom_components/life360
-```
-
-### Clone the project and add symolic link
-
-This is actually the method I use. If you don't have git, you can install it using `sudo apt install git`.
-
-First get whichever link you prefer by clicking on the Code button at the top of this page.
-There should be three options: HTTPS, SSH & GitHub CLI. Click on whichever you like,
-then click the copy button to the right of the link.
-
-`cd` to some convenient directory, then enter the following command:
-
-```
-git clone <link_copied_from_code_button>
-```
-For example:
-```
-git clone https://github.com/pnbruckner/ha-life360.git
-```
-This will create a folder named `ha-life360`.
-
-Now `cd` to `custom_components` in your Home Assistant configuration directory.
-Enter the following command:
-
-```
-ln -s <path_to_ha-life360>/custom_components/life360 life360
-```
