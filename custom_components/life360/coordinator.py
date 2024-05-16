@@ -130,6 +130,10 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
 
     async def update_member_location(self, mid: MemberID) -> None:
         """Request Member location update."""
+        # Member may no longer be available before corresponding device_tracker entity
+        # has been removed.
+        if mid not in self.data.mem_details:
+            return
         name = self.data.mem_details[mid].name
         # Member may be in more than one Circle, and each of those Circles might be
         # accessible from more than one account. So try each Circle/account combination
@@ -155,8 +159,12 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
 
     async def get_raw_member_data(
         self, mid: MemberID
-    ) -> dict[CircleID, dict[str, Any] | RequestError]:
+    ) -> dict[CircleID, dict[str, Any] | RequestError] | None:
         """Get raw Member data from each Circle Member is in."""
+        # Member may no longer be available before corresponding device_tracker entity
+        # has been removed.
+        if mid not in self.data.mem_details:
+            return None
         cids = self.mem_circles[mid]
         raw_member_list = await asyncio.gather(
             *(self._get_raw_member(mid, cid) for cid in cids)
@@ -656,6 +664,9 @@ class MemberDataUpdateCoordinator(DataUpdateCoordinator[MemberData]):
     async def _async_update_data(self) -> MemberData:
         """Fetch the latest data from the source."""
         raw_member_data = await self._coordinator.get_raw_member_data(self._mid)
+        # Member may no longer be available, but we haven't been removed yet.
+        if raw_member_data is None:
+            return self.data
 
         member_data: dict[CircleID, MemberData] = {}
         for cid, raw_member in raw_member_data.items():
