@@ -11,6 +11,7 @@ from typing import Any, cast
 
 import voluptuous as vol
 
+from homeassistant import config_entries
 from homeassistant.config_entries import SOURCE_USER, ConfigEntry, ConfigEntryDisabler
 from homeassistant.const import CONF_ENTITY_ID, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
@@ -207,7 +208,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             for mid in set(mem_coordinator) - mids
         ]
         for mid in mids - set(mem_coordinator):
+            entry_was = config_entries.current_entry.get()
+            config_entries.current_entry.set(entry)
             mem_crd = MemberDataUpdateCoordinator(hass, coordinator, mid)
+            config_entries.current_entry.set(entry_was)
             mem_coordinator[mid] = mem_crd
             coros.append(mem_crd.async_config_entry_first_refresh())
         if coros:

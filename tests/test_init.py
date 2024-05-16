@@ -1,6 +1,7 @@
 """Test Life360 __init__.py module."""
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from functools import partial
@@ -24,6 +25,7 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed,
 )
 
+from homeassistant import config_entries
 from homeassistant.components.binary_sensor import DOMAIN as BS_DOMAIN
 from homeassistant.components.device_tracker import (
     ATTR_SOURCE_TYPE,
@@ -192,6 +194,7 @@ async def test_no_circles_members(
 
 
 cir1 = {"id": "cid1", "name": "Circle1"}
+cir2 = {"id": "cid2", "name": "Circle2"}
 mem1 = {
     "id": "mid1",
     "firstName": "First1",
@@ -399,6 +402,81 @@ async def test_circles_members_delayed(
     # Check that Circles & Members have been written to storage.
     cast(list[str], circles[cir1["id"]]["mids"]).append(cast(str, mem2["id"]))
     assert_stored_data(hass_storage, circles, [mem1, mem2])
+
+
+@pytest.mark.parametrize(
+    "MockLife360",
+    [
+        {
+            "aid1": {
+                "get_circles": repeat([cir1]),
+                "get_circle_members": repeat([mem1]),
+                "get_circle_member": repeat(mem1),
+            },
+            "aid2": {
+                "get_circles": repeat([cir2]),
+                "get_circle_members": repeat([mem2]),
+                "get_circle_member": repeat(mem2),
+            },
+        },
+    ],
+    indirect=["MockLife360"],
+)
+async def test_acct_added(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+):
+    """Test account added after initial setup."""
+    # Start with one account.
+    # Use higher verbosity so that API name is AccountID.
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=Life360ConfigFlow.VERSION,
+        options=cfg_options(1, verbosity=3),
+    )
+    entry.add_to_hass(hass)
+
+    with assert_setup_component(0, DOMAIN):
+        assert await async_setup_component(hass, DOMAIN, {})
+        await hass.async_block_till_done()
+
+    aid1 = AccountID("aid1")
+    mid1 = MemberID(cast(str, mem1["id"]))
+
+    # Check that account 1 binary online sensor exists and is on.
+    bs_entity_id_1 = entity_registry.async_get_entity_id(BS_DOMAIN, DOMAIN, aid1)
+    assert bs_entity_id_1
+    state = hass.states.get(bs_entity_id_1)
+    assert state
+    assert state.state == STATE_ON
+
+    # Check that device_tracker 1 exists.
+    dt_entity_id_1 = entity_registry.async_get_entity_id(DT_DOMAIN, DOMAIN, mid1)
+    assert dt_entity_id_1
+    assert hass.states.get(dt_entity_id_1)
+
+    # Simulate other config entries have been setup.
+    config_entries.current_entry.set(None)
+
+    # Add account.
+    hass.config_entries.async_update_entry(entry, options=cfg_options(2, verbosity=3))
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
+
+    aid2 = AccountID("aid2")
+    mid2 = MemberID(cast(str, mem2["id"]))
+
+    # Check that account 2 binary online sensor exists and is on.
+    bs_entity_id_2 = entity_registry.async_get_entity_id(BS_DOMAIN, DOMAIN, aid2)
+    assert bs_entity_id_2
+    state = hass.states.get(bs_entity_id_2)
+    assert state
+    assert state.state == STATE_ON
+
+    # Check that device_tracker 2 exists.
+    dt_entity_id_2 = entity_registry.async_get_entity_id(DT_DOMAIN, DOMAIN, mid2)
+    assert dt_entity_id_2
+    assert hass.states.get(dt_entity_id_2)
 
 
 @pytest.mark.parametrize(
