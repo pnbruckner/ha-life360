@@ -414,8 +414,6 @@ class Life360Flow(FlowHandler, ABC):
                 else:
                     assert self._authorization is not None
                     authorization = self._authorization
-                # Check that authorization works.
-                await api.get_me()
             finally:
                 session.detach()
         elif self._authorization is not None:

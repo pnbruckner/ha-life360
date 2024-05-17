@@ -86,9 +86,6 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
     def __init__(self, hass: HomeAssistant, store: Life360Store) -> None:
         """Initialize data update coordinator."""
         super().__init__(hass, _LOGGER, name=DOMAIN)
-        # always_update added in 2023.9.
-        if hasattr(self, "always_update"):
-            self.always_update = False
         self._store = store
         self.data = self._data_from_store()
         self._options = ConfigOptions.from_dict(self.config_entry.options)

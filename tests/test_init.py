@@ -38,6 +38,7 @@ from homeassistant.const import (
     ATTR_FRIENDLY_NAME,
     STATE_OFF,
     STATE_ON,
+    STATE_UNAVAILABLE,
     STATE_UNKNOWN,
 )
 from homeassistant.core import HomeAssistant
@@ -608,10 +609,10 @@ async def test_login_error(
     assert state
     assert state.state == STATE_OFF
 
-    # Check that device_tracker exists and is unknown.
+    # Check that device_tracker exists and is unavailable.
     state = hass.states.get(dt_entity_id)
     assert state
-    assert state.state == STATE_UNKNOWN
+    assert state.state == STATE_UNAVAILABLE
 
     # Simulate "fixing" error by re-enabling account.
     # NOTE: This will not remove repair issue. That is done by config flow and will be
@@ -619,11 +620,17 @@ async def test_login_error(
     options.accounts[aid].enabled = True
     hass.config_entries.async_update_entry(entry, options=options.as_dict())
     await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
 
     # Check that account binary online sensor exists and is on.
     state = hass.states.get(bs_entity_id)
     assert state
     assert state.state == STATE_ON
+
+    # Check that device_tracker exists and is unknown.
+    state = hass.states.get(dt_entity_id)
+    assert state
+    assert state.state == STATE_UNKNOWN
 
 
 async def test_remove_entry(
