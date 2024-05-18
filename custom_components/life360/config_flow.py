@@ -31,6 +31,7 @@ from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
     TextSelector,
@@ -379,10 +380,16 @@ class Life360Flow(FlowHandler, ABC):
 
     def _sel_accts_schema(self, multiple: bool) -> vol.Schema:
         """Create data schema to select one, or possibly more, account(s)."""
+        options = [
+            SelectOptionDict(
+                value=aid, label=f"{aid}{'' if acct.enabled else ' (disabled)'}"
+            )
+            for aid, acct in self._accts.items()
+        ]
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_ACCOUNTS): SelectSelector(
-                    SelectSelectorConfig(options=self._aids, multiple=multiple),
+                    SelectSelectorConfig(options=options, multiple=multiple),
                 )
             }
         )

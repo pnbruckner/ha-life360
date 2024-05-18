@@ -82,6 +82,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
 
     config_entry: ConfigEntry
     _bg_update_task: asyncio.Task | None = None
+    _fg_update_task: asyncio.Task | None = None
 
     def __init__(self, hass: HomeAssistant, store: Life360Store) -> None:
         """Initialize data update coordinator."""
@@ -180,30 +181,47 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
 
     async def _async_update_data(self) -> CirclesMembersData:
         """Fetch the latest data from the source."""
-        done_msg = "Circles & Members list retrieval complete"
-        data, complete = await self._update_data(retry=False)
-        if not complete:
-            _LOGGER.warning(
-                "Could not retrieve full Circles & Members list from server"
-                "; will retry"
-            )
+        done_msg = "Circles & Members list retrieval %s"
+        assert not self._fg_update_task
+        self._fg_update_task = asyncio.current_task()
+        _LOGGER.debug("Circles & Members foreground update: %s", self._fg_update_task)
+        try:
+            data, complete = await self._update_data(retry=False)
+            if not complete:
+                _LOGGER.warning(
+                    "Could not retrieve full Circles & Members list from server"
+                    "; will retry"
+                )
 
-            async def bg_update() -> None:
-                """Update Circles & Members in background."""
-                data, _ = await self._update_data(retry=True)
-                self.async_set_updated_data(data)
-                _LOGGER.warning(done_msg)
-                self._bg_update_task = None
+                async def bg_update() -> None:
+                    """Update Circles & Members in background."""
+                    try:
+                        data, _ = await self._update_data(retry=True)
+                        self.async_set_updated_data(data)
+                        _LOGGER.warning(done_msg, "complete")
+                    except asyncio.CancelledError:
+                        _LOGGER.warning(done_msg, "cancelled")
+                        raise
+                    finally:
+                        self._bg_update_task = None
 
-            assert not self._bg_update_task
-            self._bg_update_task = self.config_entry.async_create_background_task(
-                self.hass, bg_update(), "Update Circles & Members"
-            )
+                assert not self._bg_update_task
+                self._bg_update_task = self.config_entry.async_create_background_task(
+                    self.hass, bg_update(), "Circles & Members background update"
+                )
+                _LOGGER.debug(
+                    "Circles & Members background update: %s", self._bg_update_task
+                )
 
-        elif not self._store.loaded_ok:
-            _LOGGER.warning(done_msg)
+            elif not self._store.loaded_ok:
+                _LOGGER.warning(done_msg, "complete")
 
-        return data
+            return data
+        except asyncio.CancelledError:
+            _LOGGER.warning(done_msg, "cancelled")
+            raise
+        finally:
+            self._fg_update_task = None
 
     async def _update_data(self, retry: bool) -> tuple[CirclesMembersData, bool]:
         """Update Life360 Circles & Members seen from all enabled accounts."""
@@ -451,6 +469,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                     return RequestError.NOT_MODIFIED
                 except LoginError as exc:
                     if lrle_resp is LoginRateLimitErrorResp.RETRY:
+                        self._acct_data[aid].session.cookie_jar.clear()
                         self._set_acct_exc(aid)
                         delay = LOGIN_ERROR_RETRY_DELAY
                         delay_reason = "login error"
@@ -565,16 +584,17 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
         self._client_request_ok.clear()
 
         # Stop everything.
+        tasks = set(self._client_tasks)
+        if self._fg_update_task:
+            tasks.add(self._fg_update_task)
         if self._bg_update_task:
-            self._bg_update_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._bg_update_task
-            self._bg_update_task = None
-        # Client request tasks will consume any cancellation, so they can just be
-        # awaited.
-        for task in self._client_tasks:
+            tasks.add(self._bg_update_task)
+        for task in tasks:
+            _LOGGER.debug("Stopping: %s", task)
             task.cancel()
-        await asyncio.gather(*self._client_tasks)
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._fg_update_task = None
+        self._bg_update_task = None
 
         del_acct_ids = old_acct_ids - new_acct_ids
         self._delete_acct_data(del_acct_ids)
