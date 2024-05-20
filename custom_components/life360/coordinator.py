@@ -30,6 +30,7 @@ from .const import (
     COMM_TIMEOUT,
     DOMAIN,
     LOGIN_ERROR_RETRY_DELAY,
+    MAX_LOGIN_ERROR_RETRIES,
     SIGNAL_ACCT_STATUS,
     UPDATE_INTERVAL,
 )
@@ -62,12 +63,12 @@ class AccountData:
     online: bool = True
 
 
-class LoginRateLimitErrorResp(Enum):
+class LoginRateLimitErrResp(Enum):
     """Response to Login or RateLimited errors."""
 
-    ERROR = auto()
-    SILENT = auto()
+    LTD_LOGIN_ERROR_RETRY = auto()
     RETRY = auto()
+    SILENT = auto()
 
 
 class RequestError(Enum):
@@ -315,7 +316,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
     ) -> list[list[dict[str, str]] | RequestError]:
         """Get raw Circle data for each Circle that can be seen by each account."""
         lrle_resp = (
-            LoginRateLimitErrorResp.RETRY if retry else LoginRateLimitErrorResp.SILENT
+            LoginRateLimitErrResp.RETRY if retry else LoginRateLimitErrResp.SILENT
         )
         return await asyncio.gather(  # type: ignore[no-any-return]
             *(
@@ -406,13 +407,14 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
         target: Callable[[*_Ts], Coroutine[Any, Any, _R]],
         *args: *_Ts,
         msg: str,
-        lrle_resp: LoginRateLimitErrorResp = LoginRateLimitErrorResp.ERROR,
+        lrle_resp: LoginRateLimitErrResp = LoginRateLimitErrResp.LTD_LOGIN_ERROR_RETRY,
     ) -> _R | RequestError:
         """Make a request to the Life360 server."""
         if self._acct_data[aid].failed.is_set():
             return RequestError.NO_DATA
 
         start = dt_util.now()
+        login_error_retries = 0
         delay: int | None = None
         delay_reason = ""
         warned = False
@@ -464,35 +466,48 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                     request_task = None
                     self._set_acct_exc(aid)
                     return result
+
                 except NotModified:
                     self._set_acct_exc(aid)
                     return RequestError.NOT_MODIFIED
+
                 except LoginError as exc:
-                    if lrle_resp is LoginRateLimitErrorResp.RETRY:
-                        self._acct_data[aid].session.cookie_jar.clear()
+                    self._acct_data[aid].session.cookie_jar.clear()
+
+                    if (
+                        lrle_resp is LoginRateLimitErrResp.RETRY
+                        or lrle_resp is LoginRateLimitErrResp.LTD_LOGIN_ERROR_RETRY
+                        and login_error_retries < MAX_LOGIN_ERROR_RETRIES
+                    ):
                         self._set_acct_exc(aid)
-                        delay = LOGIN_ERROR_RETRY_DELAY
+                        if lrle_resp is LoginRateLimitErrResp.RETRY:
+                            delay = LOGIN_ERROR_RETRY_DELAY
+                        else:
+                            delay = 0
                         delay_reason = "login error"
+                        login_error_retries += 1
                         continue
 
-                    treat_as_error = lrle_resp is not LoginRateLimitErrorResp.SILENT
+                    treat_as_error = lrle_resp is not LoginRateLimitErrResp.SILENT
                     self._set_acct_exc(aid, not treat_as_error, msg, exc)
                     if treat_as_error:
                         self._handle_login_error(aid)
                     return RequestError.NO_DATA
+
                 except Life360Error as exc:
                     rate_limited = isinstance(exc, RateLimited)
-                    if lrle_resp is LoginRateLimitErrorResp.RETRY and rate_limited:
+                    if lrle_resp is LoginRateLimitErrResp.RETRY and rate_limited:
                         self._set_acct_exc(aid)
                         delay = ceil(cast(RateLimited, exc).retry_after or 0) + 10
                         delay_reason = "rate limited"
                         continue
 
                     treat_as_error = not (
-                        rate_limited and lrle_resp is LoginRateLimitErrorResp.SILENT
+                        rate_limited and lrle_resp is LoginRateLimitErrResp.SILENT
                     )
                     self._set_acct_exc(aid, not treat_as_error, msg, exc)
                     return RequestError.NO_DATA
+
         except asyncio.CancelledError:
             if request_task:
                 request_task.cancel()
