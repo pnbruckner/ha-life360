@@ -5,7 +5,7 @@ import asyncio
 from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from functools import partial
-from itertools import repeat
+from itertools import chain, repeat
 import re
 from typing import Any, Self, cast
 
@@ -14,6 +14,7 @@ from custom_components.life360.const import (
     ATTR_REASON,
     ATTRIBUTION,
     DOMAIN,
+    MAX_LOGIN_ERROR_RETRIES,
     UPDATE_INTERVAL,
 )
 from custom_components.life360.helpers import AccountID, ConfigOptions, MemberID
@@ -535,7 +536,14 @@ LOGIN_ERROR_MESSAGE = "TEST: Login error"
                 "get_circles": repeat([cir1]),
                 "get_circle_members": repeat([mem1]),
                 "get_circle_member": iter(
-                    [mem1, LoginError(LOGIN_ERROR_MESSAGE), mem1]
+                    chain(
+                        repeat(mem1, 1),
+                        repeat(
+                            LoginError(LOGIN_ERROR_MESSAGE),
+                            MAX_LOGIN_ERROR_RETRIES + 1,
+                        ),
+                        repeat(mem1),
+                    )
                 ),
             },
         },
