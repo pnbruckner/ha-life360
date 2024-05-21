@@ -11,6 +11,35 @@ However, since that time, a better understanding of the (undocumented & unsuppor
 This custom integration is now able to use the API again.
 It's, of course, yet to be seen if it will continue to work.
 
+### Note on Updating Circles & Members Lists
+
+The current implementation differs from previous versions in the way it retrieves the list of Circles visible to the registered accounts
+as well as the list of Members in each of those Circles.
+This is due to the fact that the server seems to severly limit when the list of Circles can be retrieved.
+It is not uncommon for the server to respond to a request for Circles with an HTTP error 429, too many requests,
+or an HTTP error 403, forbidden (aka a login error.)
+When this happens the request must be retried after a delay of as much as ten minutes.
+It may even need to be retried multiple times before it succeeds.
+
+Therefore, when the integration is loaded (e.g., when the integration is first added, when it is reloaded, or when HA starts)
+a WARNING message may be issued stating that the list of Circles & Members could not be retrieved and needs to be retried.
+Once the lists of Circles & Members is retrieved successfully, there will be another WARNING message saying so.
+
+Device tracker entities cannot be created until the lists of Circles & Members is known.
+
+Once this process has completed the first time, the lists will be saved in storage (i.e., config/.storage/life360).
+When the integration is reloaded or HA is restarted, this stored list will be used so that the tracker entities
+can be created and updated normally.
+At the same time, the integration will try to update the lists again from the server, so WARNING messages may be seen again.
+
+Due to the above, new Circles or Members will only be seen (and corresponding tracker entities created) when the integration is loaded.
+Therefore, if the registered accounts are added to any new Circles, or any Members are added to the known Circles,
+the integration will not be aware of those changes until it is loaded.
+This will happen at the next restart, or you can force it to happen by reloading the integration.
+I.e., go to Settings -> Devices & services -> Life360,
+click on the three dots next to "CONFIGURE" and select Reload.
+Please be patient since it could take a while due the above reasons before any new tracker entities are created.
+
 ## Installation
 
 The integration software must first be installed as a custom component.
