@@ -40,7 +40,7 @@
             },
             "acct_type_menu": {
                 "title": "Authorization Method",
-                "description": "Select authorization method.",
+                "description": "Select authorization method.\n\nUse \"Access type & token\" for accounts with a verified phone number.",
                 "menu_options": {
                     "acct_username_password": "Username & password",
                     "acct_authorization": "Access type & token"
@@ -124,7 +124,7 @@
             },
             "acct_type_menu": {
                 "title": "Authorization Method",
-                "description": "Select authorization method.",
+                "description": "Select authorization method.\n\nUse \"Access type & token\" for accounts with a verified phone number.",
                 "menu_options": {
                     "acct_username_password": "Username & password",
                     "acct_authorization": "Access type & token"

@@ -529,24 +529,46 @@ LOGIN_ERROR_MESSAGE = "TEST: Login error"
 
 
 @pytest.mark.parametrize(
-    "MockLife360",
+    ("MockLife360", "too_many_errors"),
     [
-        {
-            "aid1": {
-                "get_circles": repeat([cir1]),
-                "get_circle_members": repeat([mem1]),
-                "get_circle_member": iter(
-                    chain(
-                        repeat(mem1, 1),
-                        repeat(
-                            LoginError(LOGIN_ERROR_MESSAGE),
-                            MAX_LOGIN_ERROR_RETRIES + 1,
-                        ),
-                        repeat(mem1),
-                    )
-                ),
+        (
+            {
+                "aid1": {
+                    "get_circles": repeat([cir1]),
+                    "get_circle_members": repeat([mem1]),
+                    "get_circle_member": iter(
+                        chain(
+                            repeat(mem1, 1),
+                            repeat(
+                                LoginError(LOGIN_ERROR_MESSAGE),
+                                MAX_LOGIN_ERROR_RETRIES + 1,
+                            ),
+                            repeat(mem1),
+                        )
+                    ),
+                },
             },
-        },
+            True,
+        ),
+        (
+            {
+                "aid1": {
+                    "get_circles": repeat([cir1]),
+                    "get_circle_members": repeat([mem1]),
+                    "get_circle_member": iter(
+                        chain(
+                            repeat(mem1, 1),
+                            repeat(
+                                LoginError(LOGIN_ERROR_MESSAGE),
+                                MAX_LOGIN_ERROR_RETRIES,
+                            ),
+                            repeat(mem1),
+                        )
+                    ),
+                },
+            },
+            False,
+        ),
     ],
     indirect=["MockLife360"],
 )
@@ -556,6 +578,7 @@ async def test_login_error(
     issue_registry: ir.IssueRegistry,
     caplog: pytest.LogCaptureFixture,
     dt_now: DtNowMock,
+    too_many_errors: bool,
 ):
     """Test login error while getting Member data."""
     dt_now_real, dt_now_mock = dt_now
@@ -596,37 +619,48 @@ async def test_login_error(
     await hass.async_block_till_done()
     await asyncio.sleep(0.1)
 
-    # Check that account was disabled.
+    # Check if account was disabled.
     options = ConfigOptions.from_dict(entry.options)
-    assert not options.accounts[aid].enabled
+    assert too_many_errors ^ options.accounts[aid].enabled
 
-    # Check that an ERROR message was issued.
-    pat = re.compile(rf"{aid}: while getting data for .*: {LOGIN_ERROR_MESSAGE}.*")
-    assert_log_messages(caplog, ((1, "ERROR", pat),))
+    # Check system log messages.
+    dbg_pat = re.compile(rf"{aid}: login error while getting data for.*: will retry.*")
+    err_pat = re.compile(rf"{aid}: while getting data for .*: {LOGIN_ERROR_MESSAGE}.*")
+    assert_log_messages(
+        caplog,
+        (
+            (MAX_LOGIN_ERROR_RETRIES, "DEBUG", dbg_pat),
+            (1 if too_many_errors else 0, "ERROR", err_pat),
+        ),
+    )
 
-    # Check that repair issue was created for account.
+    # Check if repair issue was created for account.
     issue = issue_registry.async_get_issue(DOMAIN, aid)
-    assert issue
-    assert not issue.is_fixable and issue.is_persistent
-    assert issue.active and issue.severity == ir.IssueSeverity.ERROR
+    if too_many_errors:
+        assert issue
+        assert not issue.is_fixable and issue.is_persistent
+        assert issue.active and issue.severity == ir.IssueSeverity.ERROR
+    else:
+        assert not issue
 
-    # Check that account binary online sensor exists and is off.
-    state = hass.states.get(bs_entity_id)
-    assert state
-    assert state.state == STATE_OFF
+    if too_many_errors:
+        # Check that account binary online sensor exists and is off.
+        state = hass.states.get(bs_entity_id)
+        assert state
+        assert state.state == STATE_OFF
 
-    # Check that device_tracker exists and is unavailable.
-    state = hass.states.get(dt_entity_id)
-    assert state
-    assert state.state == STATE_UNAVAILABLE
+        # Check that device_tracker exists and is unavailable.
+        state = hass.states.get(dt_entity_id)
+        assert state
+        assert state.state == STATE_UNAVAILABLE
 
-    # Simulate "fixing" error by re-enabling account.
-    # NOTE: This will not remove repair issue. That is done by config flow and will be
-    #       checked in config flow tests.
-    options.accounts[aid].enabled = True
-    hass.config_entries.async_update_entry(entry, options=options.as_dict())
-    await hass.async_block_till_done()
-    await asyncio.sleep(0.1)
+        # Simulate "fixing" error by re-enabling account.
+        # NOTE: This will not remove repair issue. That is done by config flow and will
+        #       be checked in config flow tests.
+        options.accounts[aid].enabled = True
+        hass.config_entries.async_update_entry(entry, options=options.as_dict())
+        await hass.async_block_till_done()
+        await asyncio.sleep(0.1)
 
     # Check that account binary online sensor exists and is on.
     state = hass.states.get(bs_entity_id)

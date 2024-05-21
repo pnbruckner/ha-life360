@@ -216,7 +216,9 @@ class Life360Flow(FlowHandler, ABC):
             self._authorization = self._accts[aid].authorization
             self._password = self._accts[aid].password
             self._enabled = self._accts[aid].enabled
-            return await self.async_step_acct_type_menu()
+            if self._password is None:
+                return await self.async_step_acct_authorization()
+            return await self.async_step_acct_username_password()
 
         return self.async_show_form(
             step_id="mod_acct_sel",
