@@ -3,11 +3,11 @@
   "name": "Life360",
   "codeowners": ["@pnbruckner"],
   "config_flow": true,
-  "documentation": "https://github.com/pnbruckner/ha-life360/blob/0.5.0b4/README.md",
+  "documentation": "https://github.com/pnbruckner/ha-life360/blob/0.5.0b5/README.md",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/pnbruckner/ha-life360/issues",
   "loggers": ["life360"],
   "requirements": ["life360==7.0.0"],
   "single_config_entry": true,
-  "version": "0.5.0b4"
+  "version": "0.5.0b5"
 }
