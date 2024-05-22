@@ -496,4 +496,16 @@ class Life360OptionsFlow(OptionsFlowWithConfigEntry, Life360Flow):
         for aid in del_aids | self._authorized_aids:
             async_delete_issue(self.hass, DOMAIN, aid)
 
+        old_en_aids = {aid for aid, acct in old_opts.accounts.items() if acct.enabled}
+        new_en_aids = {aid for aid, acct in self._opts.accounts.items() if acct.enabled}
+        if new_en_aids != old_en_aids:
+            return await self.async_step_accts_changed()
+        return self.async_create_entry(title="", data=self._opts.as_dict())
+
+    async def async_step_accts_changed(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Delete accounts."""
+        if user_input is None:
+            return self.async_show_form(step_id="accts_changed")
         return self.async_create_entry(title="", data=self._opts.as_dict())
