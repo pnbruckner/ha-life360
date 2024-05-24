@@ -121,9 +121,9 @@ async def test_migration_v1(
 
     # Mock v1 config entries w/ associated entities.
 
-    un_f = lambda i: f"user_{i}@email_{i}.com"
-    pw_f = lambda i: f"password_{i}"
-    au_f = lambda i: f"authorization_{i}"
+    un_f = lambda i: f"user_{i}@email_{i}.com"  # noqa: E731
+    pw_f = lambda i: f"password_{i}"  # noqa: E731
+    au_f = lambda i: f"authorization_{i}"  # noqa: E731
 
     cfg_accts: dict[str, dict[str, Any]] = {}
     comb_ds: float | None = None

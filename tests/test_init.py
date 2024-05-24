@@ -123,7 +123,8 @@ def assert_stored_data(
     """Check that stored data is as expected."""
     store = hass_storage.get(DOMAIN)
     assert store
-    assert (stored_data := cast(StoreData | None, store.get("data")))
+    stored_data = cast(StoreData | None, store.get("data"))
+    assert stored_data
     stored_circles = stored_data["circles"]
     for cid, circle in circles.items():
         assert cid in stored_circles

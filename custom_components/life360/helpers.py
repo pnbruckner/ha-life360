@@ -217,7 +217,7 @@ class LocationDetails:
         address1 = raw_loc["address1"] or None
         address2 = raw_loc["address2"] or None
         if address1 and address2:
-            address: str | None = ", ".join([address1, address2])
+            address: str | None = f"{address1}, {address2}"
         else:
             address = address1 or address2
 

@@ -87,7 +87,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
 
     def __init__(self, hass: HomeAssistant, store: Life360Store) -> None:
         """Initialize data update coordinator."""
-        super().__init__(hass, _LOGGER, name=DOMAIN)
+        super().__init__(hass, _LOGGER, name="Circles & Members")
         self._store = store
         self.data = self._data_from_store()
         self._options = ConfigOptions.from_dict(self.config_entry.options)
@@ -168,7 +168,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
         raw_member_list = await asyncio.gather(
             *(self._get_raw_member(mid, cid) for cid in cids)
         )
-        return dict(zip(cids, raw_member_list))
+        return dict(zip(cids, raw_member_list, strict=True))
 
     def _data_from_store(self) -> CirclesMembersData:
         """Get Circles & Members from storage."""
@@ -185,7 +185,6 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
         done_msg = "Circles & Members list retrieval %s"
         assert not self._fg_update_task
         self._fg_update_task = asyncio.current_task()
-        _LOGGER.debug("Circles & Members foreground update: %s", self._fg_update_task)
         try:
             data, complete = await self._update_data(retry=False)
             if not complete:
@@ -210,14 +209,11 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                 self._bg_update_task = self.config_entry.async_create_background_task(
                     self.hass, bg_update(), "Circles & Members background update"
                 )
-                _LOGGER.debug(
-                    "Circles & Members background update: %s", self._bg_update_task
-                )
 
             elif not self._store.loaded_ok:
                 _LOGGER.warning(done_msg, "complete")
 
-            return data
+            return data  # noqa: TRY300
         except asyncio.CancelledError:
             _LOGGER.warning(done_msg, "cancelled")
             raise
@@ -257,7 +253,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
         # Get Circles each account can see, keeping track of which accounts can see each
         # Circle, since a Circle can be seen by more than one account.
         raw_circles_list = await self._get_raw_circles_list(retry)
-        for aid, raw_circles in zip(self._acct_data, raw_circles_list):
+        for aid, raw_circles in zip(self._acct_data, raw_circles_list, strict=True):
             if isinstance(raw_circles, RequestError):
                 circle_errors = True
                 continue
@@ -269,7 +265,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
         # Get Members in each Circle, recording their name & entity_picture.
         mem_details: dict[MemberID, MemberDetails] = {}
         raw_members_list = await self._get_raw_members_list(circles)
-        for circle, raw_members in zip(circles.items(), raw_members_list):
+        for circle, raw_members in zip(circles.items(), raw_members_list, strict=True):
             if not isinstance(raw_members, RequestError):
                 cid, circle_data = circle
                 for raw_member in raw_members:
@@ -463,9 +459,6 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                     #             await rt
                     #         raise LoginError("TEST TEST TEST")
                     result = await request_task
-                    request_task = None
-                    self._set_acct_exc(aid)
-                    return result
 
                 except NotModified:
                     self._set_acct_exc(aid)
@@ -507,6 +500,11 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                     )
                     self._set_acct_exc(aid, not treat_as_error, msg, exc)
                     return RequestError.NO_DATA
+
+                else:
+                    request_task = None
+                    self._set_acct_exc(aid)
+                    return result
 
         except asyncio.CancelledError:
             if request_task:
@@ -605,7 +603,6 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
         if self._bg_update_task:
             tasks.add(self._bg_update_task)
         for task in tasks:
-            _LOGGER.debug("Stopping: %s", task)
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self._fg_update_task = None
