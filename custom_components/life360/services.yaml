@@ -1,0 +1,5 @@
+update_location:
+  target:
+    entity:
+      integration: life360
+      domain: device_tracker

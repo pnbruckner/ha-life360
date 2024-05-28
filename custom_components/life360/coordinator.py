@@ -3,993 +3,733 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
-from datetime import datetime
-from enum import IntEnum
-from itertools import groupby
-from typing import Any, NewType, cast
+from collections.abc import Callable, Coroutine, Iterable
+from contextlib import suppress
+from copy import deepcopy
+from dataclasses import dataclass
+from enum import Enum, auto
+from functools import partial
+import logging
+from math import ceil
+from typing import Any, TypeVar, TypeVarTuple, cast
 
-from life360 import Life360, Life360Error, LoginError  # type: ignore[attr-defined]
+from aiohttp import ClientSession
+from life360 import Life360Error, LoginError, NotModified, RateLimited
 
-from homeassistant.config_entries import ConfigEntries, ConfigEntry, ConfigEntryState
-from homeassistant.const import (
-    LENGTH_FEET,
-    LENGTH_KILOMETERS,
-    LENGTH_METERS,
-    LENGTH_MILES,
-    Platform,
-)
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers import entity_registry
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.entity_registry import RegistryEntry, RegistryEntryDisabler
-from homeassistant.helpers.typing import UNDEFINED, UndefinedType
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-try:
-    from homeassistant.util.unit_conversion import DistanceConverter
-
-    convert = DistanceConverter.convert
-except ImportError:
-    from homeassistant.util.distance import convert
-from homeassistant.util.unit_system import METRIC_SYSTEM
-
+from . import helpers
 from .const import (
     COMM_MAX_RETRIES,
     COMM_TIMEOUT,
-    CONF_AUTHORIZATION,
-    DATA_CENTRAL_COORDINATOR,
     DOMAIN,
-    LOGGER,
-    SPEED_DIGITS,
-    SPEED_FACTOR_MPH,
+    LOGIN_ERROR_RETRY_DELAY,
+    MAX_LOGIN_ERROR_RETRIES,
+    SIGNAL_ACCT_STATUS,
     UPDATE_INTERVAL,
 )
+from .helpers import (
+    AccountID,
+    CircleData,
+    CircleID,
+    CirclesMembersData,
+    ConfigOptions,
+    Life360Store,
+    MemberData,
+    MemberDetails,
+    MemberID,
+)
 
+_LOGGER = logging.getLogger(__name__)
 
-def init_life360_coordinator(hass: HomeAssistant) -> None:
-    """Initialize module."""
-    hass.data[DOMAIN][DATA_CENTRAL_COORDINATOR] = Life360CentralDataUpdateCoordinator(
-        hass
-    )
-
-
-def life360_central_coordinator(
-    hass: HomeAssistant,
-) -> Life360CentralDataUpdateCoordinator:
-    """Return Life360 central coordinator."""
-    return cast(
-        Life360CentralDataUpdateCoordinator,
-        hass.data[DOMAIN][DATA_CENTRAL_COORDINATOR],
-    )
-
-
-async def async_unloading_life360_config_entry(
-    hass: HomeAssistant, entry: ConfigEntry
-) -> None:
-    """Config entry is being unloaded."""
-    await life360_central_coordinator(hass).async_unloading_config(entry)
+_R = TypeVar("_R")
+_Ts = TypeVarTuple("_Ts")
 
 
 @dataclass
-class Place:
-    """Life360 Place data."""
+class AccountData:
+    """Data for a Life360 account."""
 
-    name: str
-    latitude: float
-    longitude: float
-    radius: float
-
-
-PlaceID = NewType("PlaceID", str)
-Places = dict[PlaceID, Place]
+    session: ClientSession
+    api: helpers.Life360
+    failed: asyncio.Event
+    failed_task: asyncio.Task
+    online: bool = True
 
 
-@dataclass
-class Circle:
-    """Life360 Circle data."""
+class LoginRateLimitErrResp(Enum):
+    """Response to Login or RateLimited errors."""
 
-    name: str
-    places: Places
-    # ID of ConfigEntry whose associated account was used to fetch the Circle's data
-    cfg_id: str
+    LTD_LOGIN_ERROR_RETRY = auto()
+    RETRY = auto()
+    SILENT = auto()
 
 
-CircleID = NewType("CircleID", str)
+class RequestError(Enum):
+    """Request error type."""
+
+    NOT_MODIFIED = auto()
+    NO_DATA = auto()
 
 
-class MemberStatus(IntEnum):
-    """Status of dynamic member data."""
-
-    VALID = 3
-    MISSING_W_REASON = 2
-    MISSING_NO_REASON = 1
-    NOT_SHARING = 0
-
-
-@dataclass
-class MemberLocation:
-    """Life360 Member location data."""
-
-    address: str | None = None
-    at_loc_since: datetime | None = None
-    driving: bool | None = None
-    gps_accuracy: int | None = None
-    last_seen: datetime | None = None
-    latitude: float | None = None
-    longitude: float | None = None
-    place: str | None = None
-    speed: float | None = None
-
-
-@dataclass
-class Member:
-    """Life360 Member data."""
-
-    name: str
-    entity_picture: str | None
-
-    # status applies to the following fields
-    loc: MemberLocation = field(default_factory=MemberLocation)
-    battery_charging: bool | None = None
-    battery_level: int | None = None
-    wifi_on: bool | None = None
-
-    status: MemberStatus = MemberStatus.VALID
-    err_msg: str | None = field(default=None, compare=False)
-
-    # Since a Member can exist in more than one Circle, and the data retrieved for the
-    # Member might be different in each (e.g., some might not share location info but
-    # others do), provide a means to find the "best" data for the Member from a list of
-    # data, one from each Circle.
-    def __lt__(self, other: Member) -> bool:
-        """Determine if this member should sort before another."""
-        if self.status < other.status:
-            return True
-        if not (self.status == other.status == MemberStatus.VALID):
-            return False
-        if not self.loc.place and other.loc.place:
-            return True
-        return cast(datetime, self.loc.last_seen) < cast(datetime, other.loc.last_seen)
-
-
-MemberID = NewType("MemberID", str)
-Members = dict[MemberID, Member]
-
-
-class Life360DataUpdateCoordinator(DataUpdateCoordinator[Members]):
-    """Life360 config entry data update coordinator."""
+class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersData]):
+    """Circles & Members data update coordinator."""
 
     config_entry: ConfigEntry
-    data: Members
-    _update = False
+    _bg_update_task: asyncio.Task | None = None
+    _fg_update_task: asyncio.Task | None = None
 
-    def __init__(self, hass: HomeAssistant) -> None:
+    def __init__(self, hass: HomeAssistant, store: Life360Store) -> None:
         """Initialize data update coordinator."""
-        self._central_coordinator = life360_central_coordinator(hass)
+        super().__init__(hass, _LOGGER, name="Circles & Members")
+        self._store = store
+        self.data = self._data_from_store()
+        self._options = ConfigOptions.from_dict(self.config_entry.options)
+        self._acct_data: dict[AccountID, AccountData] = {}
+        self._create_acct_data(self._options.accounts)
+        self._client_request_ok = asyncio.Event()
+        self._client_request_ok.set()
+        self._client_tasks: set[asyncio.Task] = set()
 
-        # No periodic updates. Central coordinator will provide manual updates.
-        super().__init__(hass, LOGGER, name="", update_method=self._async_first_refresh)
-        self.name = self.config_entry.title
         self.config_entry.async_on_unload(
-            self.config_entry.add_update_listener(self._async_cfg_entry_updated)
+            self.config_entry.add_update_listener(self._config_entry_updated)
         )
 
-    # async_set_update_error was new in 2022.8
-    if not hasattr(DataUpdateCoordinator, "async_set_update_error"):
+    def acct_online(self, aid: AccountID) -> bool:
+        """Return if account is online."""
+        # When config updates and there's a new, enabled account, binary sensor could
+        # get created before coordinator finishes updating from the same event. In that
+        # case, just return True. If/when the account is determined to be offline, the
+        # binary sensor will be updated accordingly.
+        if aid not in self._acct_data:
+            return True
+        return self._acct_data[aid].online
 
-        @callback
-        def async_set_update_error(self, err: Exception) -> None:
-            """Manually set an error, log the message and notify listeners."""
-            self.last_exception = err
-            if self.last_update_success:
-                self.logger.error("Error requesting %s data: %s", self.name, err)
-                self.last_update_success = False
-                # self._listeners was changed to dict in 2022.7
-                if isinstance(self._listeners, dict):
-                    for update_callback, _ in list(self._listeners.values()):
-                        update_callback()
-                else:
-                    for update_callback in self._listeners:  # type: ignore[unreachable]
-                        update_callback()
-
-    async def async_request_refresh(self) -> None:
-        """Request a refresh."""
-        await self._central_coordinator.async_request_refresh()
-
+    # Once supporting only HA 2024.5 or newer, change to @cached_property and clear
+    # cache (i.e., if hasattr(self, "mem_circles"): delattr(self, "mem_circles"))
+    # in _async_refresh_finished override, after call to async_set_updated_data and in
+    # _config_entry_updated after updating self.data.circles.
     @property
-    def update(self) -> bool:
-        """Return if data should be updated by central coordinator."""
-        return self._update
+    def mem_circles(self) -> dict[MemberID, set[CircleID]]:
+        """Return Circles Members are in."""
+        return {
+            mid: {
+                cid
+                for cid, circle_data in self.data.circles.items()
+                if mid in circle_data.mids
+            }
+            for mid in self.data.mem_details
+        }
 
-    @update.setter
-    def update(self, update: bool) -> None:
-        """Set if data should be updated by central coordinator."""
-        if self._update != update:
-            self._update = update
-            self._central_coordinator.configure_scheduled_refreshes()
-
-    async def _async_cfg_entry_updated(
-        self, hass: HomeAssistant, cfg_entry: ConfigEntry
-    ) -> None:
-        """Run when the config entry has been updated."""
-        self.name = self.config_entry.title
-
-    async def _async_first_refresh(self) -> Members:
-        """Perform first refresh."""
-        self.update_method = None
-        result = await self._central_coordinator.async_add_coordinator(self)
-        if isinstance(result, Exception):
-            raise result
-        return result
-
-    @callback
-    def _unschedule_refresh(self) -> None:
-        """Do not get periodic updates since there is no longer any listeners."""
-        self.update = False
-
-    @callback
-    def _schedule_refresh(self) -> None:
-        """Get periodic updates since there is at least one listener."""
-        self.update = True
-
-
-@dataclass
-class ConfigData:
-    """Data associated with config entry."""
-
-    api: Life360
-    coordinator: Life360DataUpdateCoordinator
-
-
-ConfigMembers = dict[str, Members]
-
-
-# reload_lock was added to ConfigEntry in 2022.7
-class ReloadLockedConfigEntries(ConfigEntries):
-    """Add locked ConfigEntry reloading."""
-
-    def __init__(self, config_entries: ConfigEntries) -> None:
-        """Initialize ReloadLockedConfigEntries."""
-        self.__class__ = type(
-            config_entries.__class__.__name__,
-            (self.__class__, config_entries.__class__),
-            {},
-        )
-        self.__dict__ = config_entries.__dict__
-        self.reload_lock: dict[str, asyncio.Lock] = {}
-
-    async def async_reload(self, entry_id: str) -> bool:
-        """Reload an entry.
-
-        Use our reload lock since entry doesn't have one.
-        """
-        if entry_id in self.reload_lock:
-            reload_lock = self.reload_lock[entry_id]
-        else:
-            reload_lock = self.reload_lock[entry_id] = asyncio.Lock()
-        async with reload_lock:
-            return await super().async_reload(entry_id)
-
-
-class Life360CentralDataUpdateCoordinator(DataUpdateCoordinator[None]):
-    """Life360 central data update coordinator."""
-
-    data: None
-    _init_setup_complete = False
-    _pref_disable_polling = True
-    _remove_self_listener: CALLBACK_TYPE | None = None
-    _refresh_locked_for_config: str | None = None
-    _update_task: asyncio.Task[None] | None = None
-    _scheduled_refresh: bool
-
-    def __init__(self, hass: HomeAssistant) -> None:
-        """Initialize data update coordinator."""
-        super().__init__(hass, LOGGER, name=DOMAIN, update_interval=UPDATE_INTERVAL)
-        # Central coordinator should not be associated with any particular config entry.
-        self.config_entry = None
-
-        self._entity_reg = entity_registry.async_get(hass)
-        self._configs: dict[str, ConfigData] = {}
-        self._refresh_lock = asyncio.Lock()
-        self._logged: dict[CircleID, set[PlaceID]] = {}
-
-    async def async_add_coordinator(
-        self, coordinator: Life360DataUpdateCoordinator
-    ) -> Members | Exception:
-        """Add a config entry & its coordinator."""
-        cfg_entry = coordinator.config_entry
-
-        api = Life360(
-            session=async_get_clientsession(self.hass),
-            timeout=COMM_TIMEOUT,
-            max_retries=COMM_MAX_RETRIES,
-            authorization=cfg_entry.data[CONF_AUTHORIZATION],
-        )
-        try:
-            await self._async_retrieve_data(api, "get_circles")
-        except (ConfigEntryAuthFailed, UpdateFailed) as exc:
-            result: Members | Exception = exc
-        else:
-            # For now provide coordinator with an empty data set.
-            result = Members()
-
-        # If this is the second phase of a reload, then lock has already been obtained.
-        # If not, get the lock now.
-        have_lock = self._refresh_locked_for_config == cfg_entry.entry_id
-        if not have_lock:
-            await self._refresh_lock.acquire()
-
-        self._configs[cfg_entry.entry_id] = ConfigData(api, coordinator)
-
-        if not self._init_setup_complete:
-            # Has async_add_coordinator been called for all registered/enabled accounts
-            # (i.e., configs)?
-            if set(self._configs) >= {
-                cfg_entry.entry_id
-                for cfg_entry in self.hass.config_entries.async_entries(DOMAIN)
-                if not cfg_entry.disabled_by
-            }:
-                self._init_setup_complete = True
-                self._update_pref_disable_polling(
-                    all(
-                        cfg_data.coordinator.config_entry.pref_disable_polling
-                        for cfg_data in self._configs.values()
-                    )
-                )
-
-        if have_lock:
-            self._refresh_locked_for_config = None
-        self._refresh_lock.release()
-
-        if self._init_setup_complete:
-            if cfg_entry.pref_disable_polling != self._pref_disable_polling:
-                # Newly added configs are set to match polling setting for all
-                # previously added configs. User can change it afterwards if desired.
-                self.hass.config_entries.async_update_entry(
-                    cfg_entry,
-                    pref_disable_polling=self._pref_disable_polling,
-                )
-            self.hass.async_create_task(self.async_refresh())
-        cfg_entry.async_on_unload(
-            cfg_entry.add_update_listener(self._async_cfg_entry_updated)
-        )
-
-        return result
-
-    async def async_unloading_config(self, entry: ConfigEntry) -> None:
-        """Config entry is being unloaded."""
-        # If a refresh is in progress, cancel it and prevent another from starting
-        # before removing config so there is no chance any Member assigned to this
-        # config will get reassigned before unload is complete (which could cause Entity
-        # Registry updates from unloading and refresh tasks to interfer with each
-        # other.)
-        if self._update_task:
-            self._update_task.cancel()
-        await self._refresh_lock.acquire()
-        del self._configs[entry.entry_id]
-
-        def done(*, release_lock: bool = True, ok_to_refresh: bool = True) -> None:
-            if release_lock:
-                self._refresh_lock.release()
-            self.configure_scheduled_refreshes()
-            if ok_to_refresh and self._configs:
-                self.hass.async_create_task(self.async_refresh())
-
-        if self._members_assigned(entry.entry_id):
-            # Members are assigned to this config so wait for unload to complete.
-            # Also, if this is the first phase of a reload, signal to setup of same
-            # config that lock has already been obtained.
-            # reload_lock was added to ConfigEntry in 2022.7
-            if hasattr(entry, "reload_lock"):
-                reload_lock = entry.reload_lock
-            else:
-                reload_lock = cast(
-                    ReloadLockedConfigEntries, self.hass.config_entries
-                ).reload_lock[entry.entry_id]
-            if is_reload := reload_lock.locked():
-                self._refresh_locked_for_config = entry.entry_id
-
-            async def async_wait_for_unload_done() -> None:
-                await unload_done.wait()
-                if is_reload:
-                    # Wait for reload to complete.
-                    await reload_lock.acquire()
-                    reload_lock.release()
-                    # If setup phase didn't run then release the lock here.
-                    still_have_lock = self._refresh_locked_for_config == entry.entry_id
-                    if still_have_lock:
-                        self._refresh_locked_for_config = None
-                else:
-                    still_have_lock = True
-                done(
-                    release_lock=still_have_lock,
-                    # Only refresh if setup phase didn't do so already.
-                    ok_to_refresh=entry.state is not ConfigEntryState.LOADED,
-                )
-
-            unload_done = asyncio.Event()
-            entry.async_on_unload(unload_done.set)
-            # Wait for unload to complete in a separate task so this one can finish the
-            # unload process.
-            self.hass.async_create_task(async_wait_for_unload_done())
-
-        else:
-            # No Members assigned to config so go ahead and finish now.
-            done()
-
-    def configure_scheduled_refreshes(self) -> None:
-        """Enable or disable periodic updating."""
-        do_scheduled_updates = not self._pref_disable_polling and any(
-            cfg_data.coordinator.update for cfg_data in self._configs.values()
-        )
-        if do_scheduled_updates and not self._remove_self_listener:
-            # Add a listener to enable periodic updates.
-            self._remove_self_listener = self.async_add_listener(lambda: None)
-        elif not do_scheduled_updates and self._remove_self_listener:
-            self._remove_self_listener()
-            self._remove_self_listener = None
-
-    def config_coordinator(self, cfg_id: str) -> Life360DataUpdateCoordinator:
-        """Return coordinator for config."""
-        return self._configs[cfg_id].coordinator
-
-    async def async_refresh(self) -> None:
-        """Refresh data and log errors."""
-        async with self._refresh_lock:
-            await super().async_refresh()
-
-    async def _handle_refresh_interval(self, _now: datetime | None = None) -> None:
-        """Handle a refresh interval occurrence."""
-        async with self._refresh_lock:
-            await super()._handle_refresh_interval(_now)
-
-    def _members_assigned(self, cfg_id: str) -> bool:
-        """Return if config has any Members assigned."""
-        for reg_entry in self._entity_reg.entities.values():
-            if (
-                reg_entry.domain == Platform.DEVICE_TRACKER
-                and reg_entry.platform == DOMAIN
-                and reg_entry.config_entry_id == cfg_id
-            ):
-                return True
-        return False
-
-    async def _async_cfg_entry_updated(
-        self, hass: HomeAssistant, cfg_entry: ConfigEntry
-    ) -> None:
-        """Run when a config entry has been updated."""
-        if self._pref_disable_polling != cfg_entry.pref_disable_polling:
-            self._update_pref_disable_polling(cfg_entry.pref_disable_polling)
-
-    def _update_pref_disable_polling(self, pref_disable_polling: bool) -> None:
-        """Update pref_disable_polling for all configs."""
-        self._pref_disable_polling = pref_disable_polling
-        for cfg_data in self._configs.values():
-            self.hass.config_entries.async_update_entry(
-                cfg_data.coordinator.config_entry,
-                pref_disable_polling=pref_disable_polling,
-            )
-        self.configure_scheduled_refreshes()
-
-    # Parameter raise_on_entry_error was new in 2022.12.
-    async def _async_refresh(  # type: ignore[no-untyped-def]
-        self, *args, **kwargs
-    ) -> None:
-        """Refresh data."""
-
-        # In order to properly handle Member -> Config Entry assignment, all initially
-        # registered accounts (i.e., Config Entries) must get a chance to be setup and,
-        # hence, added as clients. Wait until that has happened before performing any
-        # refresh.
-        if not self._init_setup_complete:
+    async def update_member_location(self, mid: MemberID) -> None:
+        """Request Member location update."""
+        # Member may no longer be available before corresponding device_tracker entity
+        # has been removed.
+        if mid not in self.data.mem_details:
             return
+        name = self.data.mem_details[mid].name
+        # Member may be in more than one Circle, and each of those Circles might be
+        # accessible from more than one account. So try each Circle/account combination
+        # until one works.
+        for cid in self.mem_circles[mid]:
+            circle_data = self.data.circles[cid]
+            for aid in circle_data.aids:
+                api = self._acct_data[aid].api
+                result = await self._client_request(
+                    aid,
+                    api.request_circle_member_location_update,
+                    cid,
+                    mid,
+                    msg=(
+                        f"while requesting location update for {name} "
+                        f"via {circle_data.name} Circle"
+                    ),
+                )
+                if not isinstance(result, RequestError):
+                    return
 
-        if len(args) >= 3:
-            self._scheduled_refresh = args[2]
-        else:
-            self._scheduled_refresh = kwargs.get("scheduled", False)
-        await super()._async_refresh(*args, **kwargs)
-        if not self.last_update_success:
-            exc = cast(Exception, self.last_exception)
-            for cfg_data in self._configs.values():
-                cfg_data.coordinator.async_set_update_error(exc)
+        _LOGGER.error("Could not update location of %s", name)
 
-    async def _async_update_data(self) -> None:
-        """Get & process data from Life360."""
-        circles: dict[CircleID, Circle] = {}
-        members: dict[MemberID, list[tuple[CircleID, Member]]] = {}
-        cfg_circle_ids: dict[str, set[CircleID] | None] = {}
+    async def get_raw_member_data(
+        self, mid: MemberID
+    ) -> dict[CircleID, dict[str, Any] | RequestError] | None:
+        """Get raw Member data from each Circle Member is in."""
+        # Member may no longer be available before corresponding device_tracker entity
+        # has been removed.
+        if mid not in self.data.mem_details:
+            return None
+        cids = self.mem_circles[mid]
+        raw_member_list = await asyncio.gather(
+            *(self._get_raw_member(mid, cid) for cid in cids)
+        )
+        return dict(zip(cids, raw_member_list, strict=True))
 
-        self._update_task = asyncio.current_task()
+    def _data_from_store(self) -> CirclesMembersData:
+        """Get Circles & Members from storage."""
+        if not self._store.loaded_ok:
+            _LOGGER.warning(
+                "Could not load Circles & Members from storage"
+                "; will wait for data from server"
+            )
+            return CirclesMembersData()
+        return CirclesMembersData(self._store.circles, self._store.mem_details)
 
+    async def _async_update_data(self) -> CirclesMembersData:
+        """Fetch the latest data from the source."""
+        done_msg = "Circles & Members list retrieval %s"
+        assert not self._fg_update_task
+        self._fg_update_task = asyncio.current_task()
         try:
-            for cfg_id, cfg_data in self._configs.items():
-                try:
-                    circle_ids = await self._async_retrieve_config_data(
-                        cfg_id, circles, members
-                    )
-                except ConfigEntryAuthFailed as exc:
-                    cfg_data.coordinator.async_set_update_error(exc)
-                    cfg_data.coordinator.config_entry.async_start_reauth(self.hass)
-                    cfg_circle_ids[cfg_id] = None
+            data, complete = await self._update_data(retry=False)
+            if not complete:
+                _LOGGER.warning(
+                    "Could not retrieve full Circles & Members list from server"
+                    "; will retry"
+                )
+
+                async def bg_update() -> None:
+                    """Update Circles & Members in background."""
+                    try:
+                        data, _ = await self._update_data(retry=True)
+                        self.async_set_updated_data(data)
+                        _LOGGER.warning(done_msg, "complete")
+                    except asyncio.CancelledError:
+                        _LOGGER.warning(done_msg, "cancelled")
+                        raise
+                    finally:
+                        self._bg_update_task = None
+
+                assert not self._bg_update_task
+                self._bg_update_task = self.config_entry.async_create_background_task(
+                    self.hass, bg_update(), "Circles & Members background update"
+                )
+
+            elif not self._store.loaded_ok:
+                _LOGGER.warning(done_msg, "complete")
+
+            return data  # noqa: TRY300
+        except asyncio.CancelledError:
+            _LOGGER.warning(done_msg, "cancelled")
+            raise
+        finally:
+            self._fg_update_task = None
+
+    async def _update_data(self, retry: bool) -> tuple[CirclesMembersData, bool]:
+        """Update Life360 Circles & Members seen from all enabled accounts."""
+        start = dt_util.now()
+        _LOGGER.debug("Begin updating Circles & Members")
+        cancelled = False
+        try:
+            return await self._do_update(retry)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        finally:
+            _LOGGER.debug(
+                "Updating Circles & Members %stook %s",
+                "(which was cancelled) " if cancelled else "",
+                dt_util.now() - start,
+            )
+
+    async def _do_update(self, retry: bool) -> tuple[CirclesMembersData, bool]:
+        """Update Life360 Circles & Members seen from all enabled accounts.
+
+        rerty: If True, will retry indefinitely if login or rate limiting errors occur.
+        If False, will retrieve whatever data it can without retrying login or rate
+        limiting errors.
+
+        Returns True if Circles & Members were retrieved from all accounts without
+        error, or False if retry was False and at least one error occurred.
+        """
+        circle_errors = False
+        circles: dict[CircleID, CircleData] = {}
+
+        # Get Circles each account can see, keeping track of which accounts can see each
+        # Circle, since a Circle can be seen by more than one account.
+        raw_circles_list = await self._get_raw_circles_list(retry)
+        for aid, raw_circles in zip(self._acct_data, raw_circles_list, strict=True):
+            if isinstance(raw_circles, RequestError):
+                circle_errors = True
+                continue
+            for raw_circle in raw_circles:
+                if (cid := CircleID(raw_circle["id"])) not in circles:
+                    circles[cid] = CircleData(raw_circle["name"])
+                circles[cid].aids.add(aid)
+
+        # Get Members in each Circle, recording their name & entity_picture.
+        mem_details: dict[MemberID, MemberDetails] = {}
+        raw_members_list = await self._get_raw_members_list(circles)
+        for circle, raw_members in zip(circles.items(), raw_members_list, strict=True):
+            if not isinstance(raw_members, RequestError):
+                cid, circle_data = circle
+                for raw_member in raw_members:
+                    mid = MemberID(raw_member["id"])
+                    circle_data.mids.add(mid)
+                    if mid not in mem_details:
+                        mem_details[mid] = MemberDetails.from_server(raw_member)
+
+        # If there were any errors while getting Circles for each account, then retry
+        # must have been False. Since we haven't yet received Circle data for all
+        # enabled accounts, use any old information that is available to fill in the
+        # gaps for now. E.g., we don't want to remove any Member entity until we're
+        # absolutely sure they are no longer in any Circle visible from all enabled
+        # accounts.
+        if circle_errors:
+            for cid, old_circle_data in self.data.circles.items():
+                if cid in circles:
+                    circles[cid].aids |= old_circle_data.aids
                 else:
-                    cfg_circle_ids[cfg_id] = circle_ids
+                    circles[cid] = old_circle_data
+            for mid, old_md in self.data.mem_details.items():
+                if mid not in mem_details:
+                    mem_details[mid] = old_md
+
+        # Protect storage writing in case we get cancelled while it's running. We do not
+        # want to interrupt that process. It is an atomic operation, so if we get
+        # cancelled and called again while it's running, and we somehow manage to get to
+        # this point again while it still hasn't finished, we'll just wait until it is
+        # done and it will be begun again with the new data.
+        self._store.circles = circles
+        self._store.mem_details = mem_details
+        save_task = self.config_entry.async_create_task(
+            self.hass,
+            self._store.save(),
+            "Save to Life360 storage",
+        )
+        await asyncio.shield(save_task)
+
+        return CirclesMembersData(circles, mem_details), not circle_errors
+
+    async def _get_raw_circles_list(
+        self,
+        retry: bool,
+    ) -> list[list[dict[str, str]] | RequestError]:
+        """Get raw Circle data for each Circle that can be seen by each account."""
+        lrle_resp = (
+            LoginRateLimitErrResp.RETRY if retry else LoginRateLimitErrResp.SILENT
+        )
+        return await asyncio.gather(  # type: ignore[no-any-return]
+            *(
+                self._request(
+                    aid,
+                    acct_data.api.get_circles,
+                    msg="while getting Circles",
+                    lrle_resp=lrle_resp,
+                )
+                for aid, acct_data in self._acct_data.items()
+            )
+        )
+
+    async def _get_raw_members_list(
+        self, circles: dict[CircleID, CircleData]
+    ) -> list[list[dict[str, Any]] | RequestError]:
+        """Get raw Member data for each Member in each Circle."""
+
+        async def get_raw_members(
+            cid: CircleID, circle_data: CircleData
+        ) -> list[dict[str, Any]] | RequestError:
+            """Get raw Member data for each Member in Circle."""
+            # For each Circle, there may be more than one account that can see it, so
+            # keep trying if for some reason an error occurs while trying to use one.
+            for aid in circle_data.aids:
+                raw_members = await self._request(
+                    aid,
+                    self._acct_data[aid].api.get_circle_members,
+                    cid,
+                    msg=f"while getting Members in {circle_data.name} Circle",
+                )
+                if not isinstance(raw_members, RequestError):
+                    return raw_members  # type: ignore[no-any-return]
+            return RequestError.NO_DATA
+
+        return await asyncio.gather(
+            *(get_raw_members(cid, circle_data) for cid, circle_data in circles.items())
+        )
+
+    async def _get_raw_member(
+        self, mid: MemberID, cid: CircleID
+    ) -> dict[str, Any] | RequestError:
+        """Get raw Member data from given Circle."""
+        name = self.data.mem_details[mid].name
+        circle_data = self.data.circles[cid]
+        for aid in circle_data.aids:
+            raw_member = await self._client_request(
+                aid,
+                partial(
+                    self._acct_data[aid].api.get_circle_member,
+                    cid,
+                    mid,
+                    raise_not_modified=True,
+                ),
+                msg=f"while getting data for {name} from {circle_data.name} Circle",
+            )
+            if raw_member is RequestError.NOT_MODIFIED:
+                return RequestError.NOT_MODIFIED
+            if not isinstance(raw_member, RequestError):
+                return raw_member  # type: ignore[no-any-return]
+        return RequestError.NO_DATA
+
+    async def _client_request(
+        self,
+        aid: AccountID,
+        target: Callable[[*_Ts], Coroutine[Any, Any, _R]],
+        *args: *_Ts,
+        msg: str,
+    ) -> _R | RequestError:
+        """Make a request to the Life360 server on behalf of Member coordinator."""
+        await self._client_request_ok.wait()
+
+        task = cast(asyncio.Task, asyncio.current_task())
+        self._client_tasks.add(task)
+        try:
+            return await self._request(aid, target, *args, msg=msg)
+        except asyncio.CancelledError:
+            task.uncancel()
+            return RequestError.NO_DATA
+        finally:
+            self._client_tasks.discard(task)
+
+    # _requests = 0
+
+    async def _request(
+        self,
+        aid: AccountID,
+        target: Callable[[*_Ts], Coroutine[Any, Any, _R]],
+        *args: *_Ts,
+        msg: str,
+        lrle_resp: LoginRateLimitErrResp = LoginRateLimitErrResp.LTD_LOGIN_ERROR_RETRY,
+    ) -> _R | RequestError:
+        """Make a request to the Life360 server."""
+        if self._acct_data[aid].failed.is_set():
+            return RequestError.NO_DATA
+
+        start = dt_util.now()
+        login_error_retries = 0
+        delay: int | None = None
+        delay_reason = ""
+        warned = False
+
+        failed_task = self._acct_data[aid].failed_task
+        request_task: asyncio.Task[_R] | None = None
+        try:
+            while True:
+                if delay is not None:
+                    if (
+                        not warned
+                        and (dt_util.now() - start).total_seconds() + delay > 60 * 60
+                    ):
+                        _LOGGER.warning(
+                            "Getting response from Life360 for %s "
+                            "is taking longer than expected",
+                            aid,
+                        )
+                        warned = True
+                    _LOGGER.debug(
+                        "%s: %s %s: will retry in %i s", aid, delay_reason, msg, delay
+                    )
+                    await asyncio.sleep(delay)
+                request_task = self.config_entry.async_create_background_task(
+                    self.hass,
+                    target(*args),
+                    f"Make request to {aid}",
+                )
+                done, _ = await asyncio.wait(
+                    [failed_task, request_task], return_when=asyncio.FIRST_COMPLETED
+                )
+                if failed_task in done:
+                    (rt := request_task).cancel()
+                    request_task = None
+                    with suppress(asyncio.CancelledError, Life360Error):
+                        await rt
+                    return RequestError.NO_DATA
+
+                try:
+                    # if aid == "federicktest95@gmail.com":
+                    #     self._requests += 1
+                    #     if self._requests == 1:
+                    #         (rt := request_task).cancel()
+                    #         request_task = None
+                    #         with suppress(BaseException):
+                    #             await rt
+                    #         raise LoginError("TEST TEST TEST")
+                    result = await request_task
+
+                except NotModified:
+                    self._set_acct_exc(aid)
+                    return RequestError.NOT_MODIFIED
+
+                except LoginError as exc:
+                    self._acct_data[aid].session.cookie_jar.clear()
+
+                    if (
+                        lrle_resp is LoginRateLimitErrResp.RETRY
+                        or lrle_resp is LoginRateLimitErrResp.LTD_LOGIN_ERROR_RETRY
+                        and login_error_retries < MAX_LOGIN_ERROR_RETRIES
+                    ):
+                        self._set_acct_exc(aid)
+                        if lrle_resp is LoginRateLimitErrResp.RETRY:
+                            delay = LOGIN_ERROR_RETRY_DELAY
+                        else:
+                            delay = 0
+                        delay_reason = "login error"
+                        login_error_retries += 1
+                        continue
+
+                    treat_as_error = lrle_resp is not LoginRateLimitErrResp.SILENT
+                    self._set_acct_exc(aid, not treat_as_error, msg, exc)
+                    if treat_as_error:
+                        self._handle_login_error(aid)
+                    return RequestError.NO_DATA
+
+                except Life360Error as exc:
+                    rate_limited = isinstance(exc, RateLimited)
+                    if lrle_resp is LoginRateLimitErrResp.RETRY and rate_limited:
+                        self._set_acct_exc(aid)
+                        delay = ceil(cast(RateLimited, exc).retry_after or 0) + 10
+                        delay_reason = "rate limited"
+                        continue
+
+                    treat_as_error = not (
+                        rate_limited and lrle_resp is LoginRateLimitErrResp.SILENT
+                    )
+                    self._set_acct_exc(aid, not treat_as_error, msg, exc)
+                    return RequestError.NO_DATA
+
+                else:
+                    request_task = None
+                    self._set_acct_exc(aid)
+                    return result
 
         except asyncio.CancelledError:
-            return None
+            if request_task:
+                request_task.cancel()
+                with suppress(asyncio.CancelledError, Life360Error):
+                    await request_task
+            raise
         finally:
-            self._update_task = None
+            if warned:
+                _LOGGER.warning("Done trying to get response from Life360 for %s", aid)
 
-        self._log_new_circles_and_places(circles)
-        result = self._assign_members(
-            circles, cfg_circle_ids, self._group_sort_members(members)
-        )
-        self._dump_result(result)  # type: ignore[no-untyped-call]
-        for cfg_id, data in result.items():
-            coordinator = self._configs[cfg_id].coordinator
-            if coordinator.update or not self._scheduled_refresh:
-                coordinator.async_set_updated_data(data)
-
-        return None
-
-    async def _async_retrieve_config_data(
+    def _set_acct_exc(
         self,
-        cfg_id: str,
-        circles: dict[CircleID, Circle],
-        members: dict[MemberID, list[tuple[CircleID, Member]]],
-    ) -> set[CircleID]:
-        """Retrieve data using a Life360 account."""
-        LOGGER.info(
-            "Retrieving data for %s",
-            self._configs[cfg_id].coordinator.config_entry.title,
+        aid: AccountID,
+        online: bool = True,
+        msg: str = "",
+        exc: Exception | None = None,
+    ) -> None:
+        """Set account exception status and signal clients if it has changed."""
+        acct = self._acct_data[aid]
+        if exc is not None:
+            level = logging.ERROR if not online and acct.online else logging.DEBUG
+            _LOGGER.log(level, "%s: %s: %s", aid, msg, exc)
+
+        if online == acct.online:
+            return
+
+        if online and not acct.online:
+            _LOGGER.error("%s: Fetching data recovered", aid)
+        acct.online = online
+        async_dispatcher_send(self.hass, SIGNAL_ACCT_STATUS, aid)
+
+    def _handle_login_error(self, aid: AccountID) -> None:
+        """Handle account login error."""
+        if (failed := self._acct_data[aid].failed).is_set():
+            return
+        # Signal all current requests using account to stop and return NO_DATA.
+        failed.set()
+
+        # Create repair issue for account and disable it. Deleting repair issues will be
+        # handled by config flow.
+        async_create_issue(
+            self.hass,
+            DOMAIN,
+            aid,
+            is_fixable=False,
+            is_persistent=True,
+            severity=IssueSeverity.ERROR,
+            translation_key="login_error",
+            translation_placeholders={"acct_id": aid},
         )
-        api = self._configs[cfg_id].api
+        options = self._options.as_dict()
+        options["accounts"][aid]["enabled"] = False
+        self.hass.config_entries.async_update_entry(self.config_entry, options=options)
 
-        circle_ids: set[CircleID] = set()
-        new_circles: dict[CircleID, Circle] = {}
-        found_members: dict[MemberID, list[tuple[CircleID, Member]]] = {}
+    async def _config_entry_updated(self, _: HomeAssistant, entry: ConfigEntry) -> None:
+        """Run when the config entry has been updated."""
+        if self._options == (new_options := ConfigOptions.from_dict(entry.options)):
+            return
 
-        for circle_data in await self._async_retrieve_data(api, "get_circles"):
-            circle_id = CircleID(circle_data["id"])
-
-            # Keep track of which circles config has access to.
-            circle_ids.add(circle_id)
-            # First time we see a circle retrieve all its data.
-            if circle_id not in circles:
-                circle_places, circle_members = await asyncio.gather(
-                    self._async_retrieve_data(api, "get_circle_places", circle_id),
-                    self._async_retrieve_data(api, "get_circle_members", circle_id),
-                )
-
-                # Process Places in this Circle.
-                # Record which config was used to retrieve the Circle data.
-                new_circles[circle_id] = Circle(
-                    circle_data["name"],
-                    {
-                        place_data["id"]: Place(
-                            place_data["name"],
-                            float(place_data["latitude"]),
-                            float(place_data["longitude"]),
-                            float(place_data["radius"]),
-                        )
-                        for place_data in circle_places
-                    },
-                    cfg_id,
-                )
-
-                # Process Members in this Circle.
-                # Keep track of which Circle the data came from.
-                for member_data in circle_members:
-                    member_id, member = self._process_member_data(member_data)
-                    found_members.setdefault(member_id, []).append((circle_id, member))
-
-        circles.update(new_circles)
-        for member_id, cid_mem_list in found_members.items():
-            members.setdefault(member_id, []).extend(cid_mem_list)
-
-        return circle_ids
-
-    async def _async_retrieve_data(
-        self, api: Life360, func: str, *args: Any
-    ) -> list[dict[str, Any]]:
-        """Get data from Life360."""
-        try:
-            return cast(list[dict[str, Any]], await getattr(api, func)(*args))
-        except LoginError as exc:
-            LOGGER.debug("Login error: %s", exc)
-            raise ConfigEntryAuthFailed(exc) from exc
-        except Life360Error as exc:
-            LOGGER.debug("%s: %s", exc.__class__.__name__, exc)
-            raise UpdateFailed(exc) from exc
-
-    def _process_member_data(
-        self, member_data: dict[str, Any]
-    ) -> tuple[MemberID, Member]:
-        """Process raw member data from server."""
-        member_id: MemberID = member_data["id"]
-        first: str | None = member_data["firstName"]
-        last: str | None = member_data["lastName"]
-        if first and last:
-            name = " ".join([first, last])
-        else:
-            name = first or last or "No Name"
-        entity_picture: str | None = member_data["avatar"]
-
-        if not int(member_data["features"]["shareLocation"]):
-            # Member isn't sharing location with this Circle.
-            return (
-                member_id,
-                Member(name, entity_picture, status=MemberStatus.NOT_SHARING),
-            )
-
-        loc: dict[str, Any] | None
-        if not (loc := member_data["location"]):
-            err_msg: str | None
-            extended_reason: str | None
-            if err_msg := member_data["issues"]["title"]:
-                if extended_reason := member_data["issues"]["dialog"]:
-                    err_msg += f": {extended_reason}"
-                status = MemberStatus.MISSING_W_REASON
-            else:
-                err_msg = (
-                    "The user may have lost connection to Life360. "
-                    "See https://www.life360.com/support/"
-                )
-                status = MemberStatus.MISSING_NO_REASON
-            return (
-                member_id,
-                Member(name, entity_picture, status=status, err_msg=err_msg),
-            )
-
-        place: str | None = loc["name"] or None
-
-        address1: str | None = loc["address1"] or None
-        address2: str | None = loc["address2"] or None
-        if address1 and address2:
-            address: str | None = ", ".join([address1, address2])
-        else:
-            address = address1 or address2
-
-        speed = max(0, float(loc["speed"]) * SPEED_FACTOR_MPH)
-        if self.hass.config.units is METRIC_SYSTEM:
-            speed = convert(speed, LENGTH_MILES, LENGTH_KILOMETERS)
-
-        return (
-            member_id,
-            Member(
-                name,
-                entity_picture,
-                MemberLocation(
-                    address,
-                    dt_util.utc_from_timestamp(int(loc["since"])),
-                    bool(int(loc["isDriving"])),
-                    # Life360 reports accuracy in feet, but Device Tracker expects
-                    # gps_accuracy in meters.
-                    round(convert(float(loc["accuracy"]), LENGTH_FEET, LENGTH_METERS)),
-                    dt_util.utc_from_timestamp(int(loc["timestamp"])),
-                    float(loc["latitude"]),
-                    float(loc["longitude"]),
-                    place,
-                    round(speed, SPEED_DIGITS),
-                ),
-                bool(int(loc["charge"])),
-                int(float(loc["battery"])),
-                bool(int(loc["wifiState"])),
-            ),
-        )
-
-    def _log_new_circles_and_places(self, circles: dict[CircleID, Circle]) -> None:
-        """Log any new Circles and Places."""
-        for circle_id, circle in circles.items():
-            if circle_id not in self._logged:
-                LOGGER.debug("Circle: %s", circle.name)
-                self._logged[circle_id] = set()
-            if new_places := set(circle.places) - self._logged[circle_id]:
-                self._logged[circle_id] |= new_places
-                msg = f"Places from {circle.name}:"
-                for place_id in new_places:
-                    place = circle.places[place_id]
-                    msg += f"\n- name: {place.name}"
-                    msg += f"\n  latitude: {place.latitude}"
-                    msg += f"\n  longitude: {place.longitude}"
-                    msg += f"\n  radius: {place.radius}"
-                LOGGER.debug(msg)
-
-    def _group_sort_members(
-        self,
-        members: dict[MemberID, list[tuple[CircleID, Member]]],
-    ) -> dict[MemberID, dict[MemberStatus, tuple[Member, tuple[CircleID]]]]:
-        """Group and sort Member results."""
-        # For each MemberID, group results by MemberStatus, and for each group find the
-        # best Member data, and all the CircleIDs that saw the Member with that same
-        # status, but also with the CircleIDs sorted with the Circles that saw the best
-        # data (within that group) first.
-        mem_cids_per_status: dict[
-            MemberID, dict[MemberStatus, tuple[Member, tuple[CircleID]]]
-        ] = {}
-        for member_id, cid_mem_list in members.items():
-            mem_cids_per_status[member_id] = {}
-            for status, group in groupby(
-                sorted(
-                    cid_mem_list, key=lambda cid_member: cid_member[1], reverse=True
-                ),
-                lambda cid_member: cid_member[1].status,
-            ):
-                cids, mems = cast(
-                    tuple[tuple[CircleID], tuple[Member]],
-                    tuple(zip(*group)),
-                )
-                mem_cids_per_status[member_id][status] = max(mems), cids
-        return mem_cids_per_status
-
-    def _assign_members(
-        self,
-        circles: dict[CircleID, Circle],
-        cfg_circle_ids: dict[str, set[CircleID] | None],
-        mem_cids_per_status: dict[
-            MemberID, dict[MemberStatus, tuple[Member, tuple[CircleID]]]
-        ],
-    ) -> ConfigMembers:
-        """Assign Members to appropriate config entries."""
-
-        # If a Member can be seen via multiple config entries, choose the one that sees
-        # that Member the 'best' (e.g., where all location data is available.) But, if
-        # that Member is already assigned to a config entry, try to keep that
-        # association.
-
-        # The process may involve moving a Member from one config entry to another if a
-        # different config entry can see the Member 'better'; e.g., the Member is no
-        # longer sharing their location with any Circle the originally assigned config
-        # entry can see, but is sharing with a Circle that can be seen by another config
-        # entry.
-
-        # Also handle a Member that is no longer seen by any visible Circle. E.g.,
-        # Member may have deleted their Life360 account, or has left all the Circles
-        # that can be seen via the configured Life360 accounts, or these accounts can no
-        # longer see any Circles that the Member is in (e.g., account user has left
-        # those Circles), etc.
-
-        auth_failures = {
-            cfg_id for cfg_id in self._configs if cfg_circle_ids[cfg_id] is None
+        old_options = self._options
+        self._options = new_options
+        # Get previously and currently enabled accounts.
+        old_accts = {
+            aid: acct for aid, acct in old_options.accounts.items() if acct.enabled
         }
-        assignable_configs = set(self._configs) - auth_failures
-        result = ConfigMembers({cfg_id: Members() for cfg_id in assignable_configs})
+        new_accts = {
+            aid: acct for aid, acct in new_options.accounts.items() if acct.enabled
+        }
+        if old_accts == new_accts and old_options.verbosity == new_options.verbosity:
+            return
 
-        # Determine how to handle Members, either previously seen or newly seen.
-        # Note that any Member currently assigned to a config entry for which there was
-        # a login error will be ignored until either the error is cleared or the config
-        # entry is disabled/deleted. These Members will show as unavailable.
-        registered_members: set[MemberID] = set()
-        current_member_assignments: dict[MemberID, str] = {}
-        keep_assigned_members: set[MemberID] = set()
-        for reg_entry in self._entity_reg.entities.values():
-            if (
-                reg_entry.domain != Platform.DEVICE_TRACKER
-                or reg_entry.platform != DOMAIN
-            ):
+        old_acct_ids = set(old_accts)
+        new_acct_ids = set(new_accts)
+
+        for aid in old_acct_ids & new_acct_ids:
+            api = self._acct_data[aid].api
+            api.authorization = new_options.accounts[aid].authorization
+            api.name = (
+                aid
+                if new_options.verbosity >= 3
+                else f"Account {list(self._acct_data).index(aid) + 1}"
+            )
+            api.verbosity = new_options.verbosity
+
+        if old_accts == new_accts:
+            return
+
+        # Prevent any client requests from starting.
+        self._client_request_ok.clear()
+
+        # Stop everything.
+        tasks = set(self._client_tasks)
+        if self._fg_update_task:
+            tasks.add(self._fg_update_task)
+        if self._bg_update_task:
+            tasks.add(self._bg_update_task)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._fg_update_task = None
+        self._bg_update_task = None
+
+        del_acct_ids = old_acct_ids - new_acct_ids
+        self._delete_acct_data(del_acct_ids)
+        self._create_acct_data(new_acct_ids - old_acct_ids)
+
+        # Remove any accounts that no longer exist, or at least, are no longer
+        # enabled. If that leaves any Circles with no accounts that can access it, then
+        # also remove those Circles. And, lastly, if that leaves any Members not
+        # associated with at least one Circle, then remove those Members, too.
+        no_aids: list[CircleID] = []
+        for cid, circle_data in self.data.circles.items():
+            circle_data.aids -= del_acct_ids
+            if not circle_data.aids:
+                no_aids.append(cid)
+        for cid in no_aids:
+            del self.data.circles[cid]
+        for mid in [mid for mid in self.data.mem_details if not self.mem_circles[mid]]:
+            del self.data.mem_details[mid]
+
+        await self.async_refresh()
+
+        # Allow client requests to proceed.
+        self._client_request_ok.set()
+
+    def _create_acct_data(self, aids: Iterable[AccountID]) -> None:
+        """Create data needed for each specified Life360 account."""
+        for idx, aid in enumerate(aids):
+            acct = self._options.accounts[aid]
+            if not acct.enabled:
                 continue
-            registered_members.add(member_id := MemberID(reg_entry.unique_id))
-            if cfg_id := reg_entry.config_entry_id:
-                current_member_assignments[member_id] = cfg_id
-                if cfg_id in auth_failures:
-                    keep_assigned_members.add(member_id)
-        assigned_members = set(current_member_assignments)
-        reassignable_members = assigned_members - keep_assigned_members
-        seen_members = set(mem_cids_per_status)
-
-        check_assignments = reassignable_members & seen_members
-        remove_assignments = reassignable_members - seen_members
-        make_assignments = seen_members - assigned_members
-
-        LOGGER.info("auth_failures: %s", auth_failures)
-        LOGGER.info("assignable_configs: %s", assignable_configs)
-        self._dump_result(result, msg="_assign_members start", short=True)  # type: ignore[no-untyped-call]
-        LOGGER.info("registered_members: %s", registered_members)
-        LOGGER.info("current_member_assignments: %s", current_member_assignments)
-        LOGGER.info("keep_assigned_members: %s", keep_assigned_members)
-        LOGGER.info("seen_members: %s", seen_members)
-        LOGGER.info("remove_assignments: %s", remove_assignments)
-        LOGGER.info("make_assignments: %s", make_assignments)
-        LOGGER.info("check_assignments: %s", check_assignments)
-
-        def find_a_config(cfg_ids: set[str], circle_ids: tuple[CircleID]) -> str | None:
-            """Find a config that saw one of the Circles."""
-            # Circles with best data come first.
-            for circle_id in circle_ids:
-                # See if config that was used to actually fetch the Circle's data can
-                # be used.
-                if (cfg_id := circles[circle_id].cfg_id) in cfg_ids:
-                    return cfg_id
-                # Try to find another config that saw this Circle
-                for cfg_id in cfg_ids:
-                    if circle_id in cast(set[CircleID], cfg_circle_ids[cfg_id]):
-                        return cfg_id
-            return None
-
-        for member_id in check_assignments:
-            cur_cfg_id = current_member_assignments[member_id]
-            cur_cfg_entry = self.hass.config_entries.async_get_entry(cur_cfg_id)
-
-            new_cfg_id: str | None = None
-            for member, circle_ids in mem_cids_per_status[member_id].values():
-                if cur_cfg_id in assignable_configs and cast(
-                    set[CircleID], cfg_circle_ids[cur_cfg_id]
-                ) & set(circle_ids):
-                    new_cfg_id = cur_cfg_id
-                else:
-                    new_cfg_id = find_a_config(
-                        assignable_configs - {cur_cfg_id}, circle_ids
-                    )
-                if new_cfg_id:
-                    break
-
-            if not new_cfg_id:
-                remove_assignments.add(member_id)
-                continue
-
-            # pylint doesn't understand that member variable will always be valid at
-            # this point.
-            # pylint: disable=undefined-loop-variable
-
-            if new_cfg_id == cur_cfg_id:
-                reg_entry = self._update_entity_registry(member_id, name=member.name)
-                result[cur_cfg_id][member_id] = member
-                LOGGER.info(
-                    "%s keeping assigned to %s",
-                    _member_str(reg_entry, member_id),
-                    cast(ConfigEntry, cur_cfg_entry).title,
-                )
-                # self._dump_result(result, short=True)
-                continue
-
-            new_cfg_entry = self._configs[new_cfg_id].coordinator.config_entry
-
-            old_reg_entry = self._reg_entry(member_id)
-            reg_entry = self._update_entity_registry(
-                member_id, cfg_id=new_cfg_id, name=member.name
+            session = async_create_clientsession(self.hass, timeout=COMM_TIMEOUT)
+            name = aid if self._options.verbosity >= 3 else f"Account {idx + 1}"
+            api = helpers.Life360(
+                session,
+                COMM_MAX_RETRIES,
+                acct.authorization,
+                name=name,
+                verbosity=self._options.verbosity,
             )
-            if not reg_entry.disabled:
-                result[new_cfg_id][member_id] = member
-            elif not old_reg_entry.disabled:
-                LOGGER.warning(
-                    "%s reassigned to %s, but it has "
-                    '"Enable newly added entities" turned off',
-                    _member_str(reg_entry),
-                    new_cfg_entry.title,
-                )
-
-            if cur_cfg_entry:
-                cur_account = f"account {cur_cfg_entry.title}"
-            else:
-                cur_account = f"deleted account <{cur_cfg_id}>"
-            LOGGER.debug(
-                "%s reassigned from %s to %s%s",
-                _member_str(reg_entry, member_id),
-                cur_account,
-                new_cfg_entry.title,
-                ": disabled" if reg_entry.disabled else "",
+            failed = asyncio.Event()
+            failed_task = self.config_entry.async_create_background_task(
+                self.hass,
+                failed.wait(),
+                f"Monitor failed requests to {aid}",
             )
-            # self._dump_result(result, short=True)
+            self._acct_data[aid] = AccountData(session, api, failed, failed_task)
 
-        for member_id in remove_assignments:
-            # Disconnect entity from config entry. This will cause the corresponding
-            # entity to be removed, but it will remain in the entity registry in case
-            # Member becomes visible again. Or the user can decide to delete the entity
-            # registry entry.
-            reg_entry = self._update_entity_registry(member_id, cfg_id=None)
-            LOGGER.warning(
-                "%s is no longer in any visible Circle", _member_str(reg_entry)
-            )
-            LOGGER.debug("%s is no longer visible", _member_str(reg_entry, member_id))
+    def _delete_acct_data(self, aids: Iterable[AccountID]) -> None:
+        """Delete data previously created for each specified Life360 account."""
+        for aid in aids:
+            acct = self._acct_data.pop(aid)
+            acct.session.detach()
+            acct.failed_task.cancel()
 
-        for member_id in make_assignments:
-            cfg_id = None
-            for member, circle_ids in mem_cids_per_status[member_id].values():
-                if cfg_id := find_a_config(assignable_configs, circle_ids):
-                    break
-            if not cfg_id:
-                continue
 
-            cfg_entry = self._configs[cfg_id].coordinator.config_entry
-            if member_id in registered_members:
-                reg_entry = self._update_entity_registry(
-                    member_id, cfg_id=cfg_id, name=member.name
-                )
-            else:
-                reg_entry = self._entity_reg.async_get_or_create(
-                    Platform.DEVICE_TRACKER,
-                    DOMAIN,
-                    member_id,
-                    suggested_object_id=member.name,
-                    config_entry=cfg_entry,
-                    original_name=member.name,
-                )
-            if not reg_entry.disabled:
-                result[cfg_id][member_id] = member
+class MemberDataUpdateCoordinator(DataUpdateCoordinator[MemberData]):
+    """Member data update coordinator."""
 
-            LOGGER.debug(
-                "%s assigned to account %s%s",
-                _member_str(reg_entry, member_id),
-                cfg_entry.title,
-                ": disabled" if reg_entry.disabled else "",
-            )
-            # self._dump_result(result, short=True)
+    config_entry: ConfigEntry
 
-        return result
-
-    def _reg_entry(self, member_id: MemberID) -> RegistryEntry:
-        """Return current Entity Registry entry for Member."""
-        return self._entity_reg.entities[
-            cast(
-                str,
-                self._entity_reg.async_get_entity_id(
-                    Platform.DEVICE_TRACKER, DOMAIN, member_id
-                ),
-            )
-        ]
-
-    def _update_entity_registry(
+    def __init__(
         self,
-        member_id: MemberID,
-        *,
-        cfg_id: str | None | UndefinedType = UNDEFINED,
-        name: str | UndefinedType = UNDEFINED,
-    ) -> RegistryEntry:
-        """Update Entity Registry entry for Member.
-
-        Returns new Entity Registry entry.
-        """
-        reg_entry = self._reg_entry(member_id)
-        if cfg_id is UNDEFINED or reg_entry.disabled_by is RegistryEntryDisabler.USER:
-            disable_by: RegistryEntryDisabler | UndefinedType | None = UNDEFINED
-        elif (
-            cfg_id
-            and self._configs[cfg_id].coordinator.config_entry.pref_disable_new_entities
-        ):
-            disable_by = RegistryEntryDisabler.INTEGRATION
-        else:
-            disable_by = None
-        return self._entity_reg.async_update_entity(
-            reg_entry.entity_id,
-            config_entry_id=cfg_id,
-            disabled_by=disable_by,
-            original_name=name,
+        hass: HomeAssistant,
+        coordinator: CirclesMembersDataUpdateCoordinator,
+        mid: MemberID,
+    ) -> None:
+        """Initialize data update coordinator."""
+        mem_details = coordinator.data.mem_details[mid]
+        super().__init__(
+            hass, _LOGGER, name=mem_details.name, update_interval=UPDATE_INTERVAL
         )
+        # always_update added in 2023.9.
+        if hasattr(self, "always_update"):
+            self.always_update = False
+        self.data = MemberData(mem_details)
+        self._coordinator = coordinator
+        self._mid = mid
+        self._member_data: dict[CircleID, MemberData] = {}
 
-    def _dump_result(self, result, msg="", short=False):  # type: ignore[no-untyped-def]
-        if msg:
-            msg += ": "
-        msg += "result:"
-        if len(result):
-            for cfg_id, mems in result.items():
-                cfg_entry = cast(
-                    ConfigEntry, self.hass.config_entries.async_get_entry(cfg_id)
-                )
-                msg += f"\n  {cfg_id} {cfg_entry.title}:"
-                if len(mems):
-                    if short:
-                        msg += f" {{{', '.join(f'{mem_id}: {mem.name if mem else None}' for mem_id, mem in mems.items())}}}"
-                    else:
-                        for mem_id, mem in mems.items():
-                            msg += f"\n    {mem_id}:"
-                            msg += f"\n      {mem.name}"
-                            msg += f"\n      {mem.loc}"
-                            msg += f"\n      {mem.status.name}"
-                            msg += f"\n      {mem.err_msg}"
-                else:
-                    msg += f" {mems}"
-        else:
-            msg += f" {result}"
-        LOGGER.info(msg)
+    async def update_location(self) -> None:
+        """Request Member location update."""
+        await self._coordinator.update_member_location(self._mid)
 
+    async def _async_update_data(self) -> MemberData:
+        """Fetch the latest data from the source."""
+        raw_member_data = await self._coordinator.get_raw_member_data(self._mid)
+        # Member may no longer be available, but we haven't been removed yet.
+        if raw_member_data is None:
+            return self.data
 
-def _member_str(reg_entry: RegistryEntry, member_id: MemberID | None = None) -> str:
-    """Return a string identifying Member."""
-    name = cast(str, reg_entry.name or reg_entry.original_name)
-    entity_id = reg_entry.entity_id
-    if member_id:
-        return f"{name} ({member_id} -> {entity_id})"
-    return f"{name} ({entity_id})"
+        member_data: dict[CircleID, MemberData] = {}
+        for cid, raw_member in raw_member_data.items():
+            if not isinstance(raw_member, RequestError):
+                member_data[cid] = MemberData.from_server(raw_member)
+            elif old_md := self._member_data.get(cid):
+                member_data[cid] = old_md
+        if not member_data:
+            return self.data
+
+        # Save the data in case NotModified or server error on next cycle.
+        self._member_data = member_data
+
+        # Now take "best" data for Member.
+        data = sorted(member_data.values())[-1]
+        if len(self._coordinator.data.circles) > 1:
+            # Each Circle has its own Places. Collect all the Places where the
+            # Member might be, while keeping the Circle they came from. Then
+            # update the chosen MemberData with the Place or Places where the
+            # Member is, with each having a suffix of the name of its Circle.
+            places = {
+                cid: cast(str, md.loc.details.place)
+                for cid, md in member_data.items()
+                if md.loc and md.loc.details.place
+            }
+            if places:
+                place: str | list[str] = [
+                    f"{c_place} ({self._coordinator.data.circles[cid].name})"
+                    for cid, c_place in places.items()
+                ]
+                if len(place) == 1:
+                    place = place[0]
+                data = deepcopy(data)
+                assert data.loc
+                data.loc.details.place = place
+
+        return data

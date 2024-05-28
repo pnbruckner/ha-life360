@@ -1,44 +1,183 @@
 {
     "config": {
         "abort": {
-            "already_configured": "Account is already configured",
-            "invalid_auth": "Invalid authentication",
-            "reauth_successful": "Re-authentication was successful"
+            "reauth_successful": "Re-authentication was successful",
+            "single_instance_allowed": "Life360 supports only one configuration. Adding additional ones is not needed."
+        },
+        "create_entry": {
+            "default": "Tracker entities cannot be created until list of Circles & Members is retrieved from server. Due to server restrictions, this could take ten minutes or more. Monitor progress via WARNING messages in system log."
         },
         "error": {
-            "already_configured": "Account is already configured",
             "cannot_connect": "Failed to connect",
+            "email_not_unique": "Email address already entered",
             "invalid_auth": "Invalid authentication",
+            "invalid_email": "Invalid email",
+            "must_not_be_empty": "Must not be empty",
             "unknown": "Unexpected error"
         },
         "step": {
-            "reauth_confirm": {
+            "init": {
+                "title": "Basic Options",
                 "data": {
-                    "password": "Password"
-                },
-                "title": "Reauthenticate Integration"
+                    "max_gps_accuracy": "Max GPS accuracy",
+                    "driving_speed": "Driving speed threshold",
+                    "driving": "Show driving as state",
+                    "verbosity": "DEBUG message verbosity"
+                }
             },
-            "user": {
+            "acct_menu": {
+                "title": "Accounts",
+                "description": "Current accounts:\n{acct_ids}",
+                "menu_options": {
+                    "add_acct": "Add account",
+                    "mod_acct_sel": "Modify account",
+                    "del_accts": "Delete accounts",
+                    "done": "Done with accounts"
+                }
+            },
+            "mod_acct_sel": {
+                "title": "Modify account",
                 "data": {
+                    "accounts": "Select account to modify"
+                }
+            },
+            "acct_type_menu": {
+                "title": "Authorization Method",
+                "description": "Select authorization method.\n\nUse \"Access type & token\" for accounts with a verified phone number.",
+                "menu_options": {
+                    "acct_username_password": "Username & password",
+                    "acct_authorization": "Access type & token"
+                }
+            },
+            "acct_username_password": {
+                "title": "{action} account",
+                "data": {
+                    "username": "Email address",
                     "password": "Password",
-                    "username": "Username"
-                },
-                "title": "Configure Life360 Account"
+                    "enabled": "Enabled"
+                }
+            },
+            "acct_authorization": {
+                "title": "{action} account",
+                "description": "Go to https://app.life360.com/login, open browser's \"Developer tools\", go to Network tab & enable recording. Complete signin processor. In Network tab, look for \"token\" transer. From response tab, copy access_type & access_token values and enter below.",
+                "data": {
+                    "username": "Account identifier (e.g., phone number, email address)",
+                    "token_type": "Access type",
+                    "authorization": "Access token",
+                    "enabled": "Enabled"
+                }
+            },
+            "del_accts": {
+                "title": "Delete accounts",
+                "data": {
+                    "accounts": "Select accounts to delete"
+                }
             }
         }
     },
+    "entity": {
+        "device_tracker": {
+            "tracker": {
+                "state": {
+                    "driving": "Driving"
+                }
+            }
+        }
+    },
+    "issues": {
+        "login_error": {
+            "title": "Life360 Account Login Error",
+            "description": "Account {acct_id} credentials must be updated.\n\nTo fix, [click here](/config/integrations/integration/life360) then click CONFIGURE and modify account."
+        }
+    },
     "options": {
+        "error": {
+            "cannot_connect": "Failed to connect",
+            "email_not_unique": "Email address already entered",
+            "invalid_auth": "Invalid authentication",
+            "invalid_email": "Invalid email",
+            "must_not_be_empty": "Must not be empty",
+            "unknown": "Unexpected error"
+        },
         "step": {
             "init": {
+                "title": "Basic Options",
                 "data": {
+                    "max_gps_accuracy": "Max GPS accuracy",
+                    "driving_speed": "Driving speed threshold",
                     "driving": "Show driving as state",
-                    "driving_speed": "Driving speed",
-                    "limit_gps_acc": "Limit GPS accuracy",
-                    "max_gps_accuracy": "Max GPS accuracy (meters)",
-                    "set_drive_speed": "Set driving speed threshold"
-                },
-                "title": "Account Options"
+                    "verbosity": "DEBUG message verbosity"
+                }
+            },
+            "acct_menu": {
+                "title": "Accounts",
+                "description": "Current accounts:\n{acct_ids}",
+                "menu_options": {
+                    "add_acct": "Add account",
+                    "mod_acct_sel": "Modify account",
+                    "del_accts": "Delete accounts",
+                    "done": "Done with accounts"
+                }
+            },
+            "mod_acct_sel": {
+                "title": "Modify account",
+                "data": {
+                    "accounts": "Select account to modify"
+                }
+            },
+            "acct_type_menu": {
+                "title": "Authorization Method",
+                "description": "Select authorization method.\n\nUse \"Access type & token\" for accounts with a verified phone number.",
+                "menu_options": {
+                    "acct_username_password": "Username & password",
+                    "acct_authorization": "Access type & token"
+                }
+            },
+            "acct_username_password": {
+                "title": "{action} account",
+                "data": {
+                    "username": "Email address",
+                    "password": "Password",
+                    "enabled": "Enabled"
+                }
+            },
+            "acct_authorization": {
+                "title": "{action} account",
+                "description": "Go to https://app.life360.com/login, open browser's \"Developer tools\", go to Network tab & enable recording. Complete signin processor. In Network tab, look for \"token\" transer. From response tab, copy access_type & access_token values and enter below.",
+                "data": {
+                    "username": "Account identifier (e.g., phone number, email address)",
+                    "token_type": "Access type",
+                    "authorization": "Access token",
+                    "enabled": "Enabled"
+                }
+            },
+            "del_accts": {
+                "title": "Delete accounts",
+                "data": {
+                    "accounts": "Select accounts to delete"
+                }
+            },
+            "accts_changed": {
+                "title": "Enabled Accounts Changed",
+                "description": "List of Circles & Members needs to be updated, which can take a while. Tracker entities will be created or deleted accordingly once that is done. Monitor progress via WARNING messages in system log."
             }
+        }
+    },
+    "selector": {
+        "verbosity": {
+            "options": {
+                "0": "Redacted request errors",
+                "1": "Above plus redacted response headers",
+                "2": "Above plus redacted response data",
+                "3": "Above but only sensitive data redactions",
+                "4": "Above but no redactions"
+            }
+        }
+    },
+    "services": {
+        "update_location": {
+            "name": "Update location",
+            "description": "Request Member location update."
         }
     }
 }
