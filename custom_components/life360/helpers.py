@@ -277,9 +277,10 @@ class LocationData:
 class NoLocReason(IntEnum):
     """Reason why Member location data is missing."""
 
-    EXPLICIT = 2
-    NO_REASON = 1
-    NOT_SHARING = 0
+    EXPLICIT = 3
+    NO_REASON = 2
+    NOT_SHARING = 1
+    NOT_FOUND = 0
     NOT_SET = -1
 
 

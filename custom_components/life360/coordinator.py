@@ -14,7 +14,7 @@ from math import ceil
 from typing import Any, TypeVar, TypeVarTuple, cast
 
 from aiohttp import ClientSession
-from life360 import Life360Error, LoginError, NotModified, RateLimited
+from life360 import Life360Error, LoginError, NotFound, NotModified, RateLimited
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -44,6 +44,7 @@ from .helpers import (
     MemberData,
     MemberDetails,
     MemberID,
+    NoLocReason,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -74,6 +75,7 @@ class LoginRateLimitErrResp(Enum):
 class RequestError(Enum):
     """Request error type."""
 
+    NOT_FOUND = auto()
     NOT_MODIFIED = auto()
     NO_DATA = auto()
 
@@ -346,6 +348,10 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                 )
                 if not isinstance(raw_members, RequestError):
                     return raw_members  # type: ignore[no-any-return]
+            # TODO: It's possible Circle was deleted, or accounts were removed from
+            #       Circle, after the Circles list was obtained. This is very unlikely,
+            #       and this is not called very often, so for now, don't worry about it.
+            #       To be really robust, this possibility should be handled.
             return RequestError.NO_DATA
 
         return await asyncio.gather(
@@ -358,6 +364,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
         """Get raw Member data from given Circle."""
         name = self.data.mem_details[mid].name
         circle_data = self.data.circles[cid]
+        raw_member: dict[str, Any] | RequestError = RequestError.NO_DATA
         for aid in circle_data.aids:
             raw_member = await self._client_request(
                 aid,
@@ -372,8 +379,9 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
             if raw_member is RequestError.NOT_MODIFIED:
                 return RequestError.NOT_MODIFIED
             if not isinstance(raw_member, RequestError):
-                return raw_member  # type: ignore[no-any-return]
-        return RequestError.NO_DATA
+                return raw_member
+        # Can be NO_DATA or NOT_FOUND.
+        return raw_member
 
     async def _client_request(
         self,
@@ -459,6 +467,10 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                     #             await rt
                     #         raise LoginError("TEST TEST TEST")
                     result = await request_task
+
+                except NotFound:
+                    self._set_acct_exc(aid)
+                    return RequestError.NOT_FOUND
 
                 except NotModified:
                     self._set_acct_exc(aid)
@@ -701,7 +713,12 @@ class MemberDataUpdateCoordinator(DataUpdateCoordinator[MemberData]):
         for cid, raw_member in raw_member_data.items():
             if not isinstance(raw_member, RequestError):
                 member_data[cid] = MemberData.from_server(raw_member)
+            elif raw_member is RequestError.NOT_FOUND:
+                member_data[cid] = MemberData(
+                    self.data.details, loc_missing=NoLocReason.NOT_FOUND
+                )
             elif old_md := self._member_data.get(cid):
+                # NOT_MODIFIED or NO_DATA
                 member_data[cid] = old_md
         if not member_data:
             return self.data

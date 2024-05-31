@@ -283,6 +283,7 @@ class Life360DeviceTracker(
             return attrs
 
         reason = {
+            NoLocReason.NOT_FOUND: "Member no longer in any known Circle",
             NoLocReason.NOT_SET: "Member data could not be retrieved",
             NoLocReason.NOT_SHARING: "Member is not sharing location",
         }.get(self._data.loc_missing, cast(str, self._data.err_msg))
