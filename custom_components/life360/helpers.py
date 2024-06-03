@@ -6,24 +6,16 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import IntEnum
-from math import ceil
 from typing import Any, NewType, Self, cast
 
 from life360 import Life360
 
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    CONF_ENABLED,
-    CONF_PASSWORD,
-    CONF_USERNAME,
-    UnitOfLength,
-    UnitOfSpeed,
-)
+from homeassistant.const import CONF_ENABLED, CONF_PASSWORD, UnitOfLength
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.restore_state import ExtraStoredData
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
-from homeassistant.util.unit_conversion import DistanceConverter, SpeedConverter
+from homeassistant.util.unit_conversion import DistanceConverter
 
 from .const import (
     CONF_ACCOUNTS,
@@ -92,43 +84,6 @@ class ConfigOptions:
             data[CONF_MAX_GPS_ACCURACY],
             data[CONF_VERBOSITY],
         )
-
-    def _add_account(self, data: Mapping[str, Any], enabled: bool = True) -> None:
-        """Add account."""
-        self.accounts[data[CONF_USERNAME]] = Account(
-            data[CONF_AUTHORIZATION], data[CONF_PASSWORD], enabled
-        )
-
-    def _merge_options(self, data: Mapping[str, Any], metric: bool) -> None:
-        """Merge in options."""
-        self.driving |= data[CONF_SHOW_DRIVING]
-        if (driving_speed := data[CONF_DRIVING_SPEED]) is not None:
-            # Life360 reports speed in MPH, so we'll save driving speed threshold in
-            # that unit. However, previously the value stored in the config entry was in
-            # the current HA unit system, so we need to convert if that was (is) KPH.
-            if metric:
-                driving_speed = SpeedConverter.convert(
-                    driving_speed,
-                    UnitOfSpeed.KILOMETERS_PER_HOUR,
-                    UnitOfSpeed.MILES_PER_HOUR,
-                )
-            if self.driving_speed is None:
-                self.driving_speed = driving_speed
-            else:
-                self.driving_speed = min(self.driving_speed, driving_speed)
-        if (max_gps_accuracy := data[CONF_MAX_GPS_ACCURACY]) is not None:
-            mga_int = ceil(max_gps_accuracy)
-            if self.max_gps_accuracy is None:
-                self.max_gps_accuracy = mga_int
-            else:
-                self.max_gps_accuracy = max(self.max_gps_accuracy, mga_int)
-
-    def merge_v1_config_entry(
-        self, entry: ConfigEntry, enabled: bool, metric: bool
-    ) -> None:
-        """Merge in old v1 config entry."""
-        self._add_account(entry.data, enabled)
-        self._merge_options(entry.options, metric)
 
 
 @dataclass

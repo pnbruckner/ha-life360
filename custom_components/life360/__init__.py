@@ -3,22 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
-from dataclasses import asdict
 from functools import partial
 import logging
-from typing import Any, cast
+from typing import cast
 
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.config_entries import SOURCE_USER, ConfigEntry, ConfigEntryDisabler
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ENTITY_ID, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
-from homeassistant.helpers import config_validation as cv, entity_registry as er
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.typing import ConfigType
-from homeassistant.util.unit_system import METRIC_SYSTEM
 
 from .const import (
     DOMAIN,
@@ -30,7 +27,7 @@ from .coordinator import (
     CirclesMembersDataUpdateCoordinator,
     MemberDataUpdateCoordinator,
 )
-from .helpers import ConfigOptions, Life360Store, MemberID
+from .helpers import Life360Store, MemberID
 
 # Needed only if setup or async_setup exists.
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -43,141 +40,8 @@ _UPDATE_LOCATION_SCHEMA = vol.Schema(
 )
 
 
-def _migrate_entity(
-    ent_reg: er.EntityRegistry, entity: er.RegistryEntry, config_entry_id: str
-) -> None:
-    """Migrate an entity registry entry to new config entry."""
-    kwargs: dict[str, Any] = {"config_entry_id": config_entry_id}
-    # Entity may have been disabled indirectly when old V1 config entries were disabled
-    # below prior to completing migration in separate task. If so, re-enable them.
-    if entity.disabled_by is er.RegistryEntryDisabler.CONFIG_ENTRY:
-        kwargs["disabled_by"] = None
-    ent_reg.async_update_entity(entity.entity_id, **kwargs)
-
-
-async def _finish_migration(
-    hass: HomeAssistant,
-    v2_entry: ConfigEntry,
-    entities: Iterable[er.RegistryEntry],
-    entries: Iterable[ConfigEntry],
-) -> None:
-    """Finish migration."""
-    ent_reg = er.async_get(hass)
-
-    # Add new v2 config entry.
-    await hass.config_entries.async_add(v2_entry)
-
-    # Migrate entity registry entries to new config entry.
-    for entity in entities:
-        _migrate_entity(ent_reg, entity, v2_entry.entry_id)
-
-    # Remove old v1 entries.
-    for entry in entries:
-        await hass.config_entries.async_remove(entry.entry_id)
-
-
-async def _migrate_config_entries(
-    hass: HomeAssistant, entries: Iterable[ConfigEntry]
-) -> None:
-    """Migrate config entries from version 1 -> 2."""
-    ent_reg = er.async_get(hass)
-
-    # Get data from existing version 1 config entries.
-    options = ConfigOptions()
-    entities: list[er.RegistryEntry] = []
-
-    for entry in entries:
-        # Make sure entry is disabled so it won't get set up before we get a chance to
-        # remove it.
-        if was_enabled := not entry.disabled_by:
-            await hass.config_entries.async_set_disabled_by(
-                entry.entry_id, ConfigEntryDisabler.USER
-            )
-
-        # Convert data & options to options for new config entry.
-        options.merge_v1_config_entry(
-            entry, was_enabled, hass.config.units is METRIC_SYSTEM
-        )
-
-        # Gather entities so they can be reassigned to new config entry.
-        entities.extend(er.async_entries_for_config_entry(ent_reg, entry.entry_id))
-
-    # Create new config entry.
-    # minor_version is new in 2024.1.
-    create_config_entry = partial(
-        ConfigEntry,
-        version=2,
-        domain=DOMAIN,
-        title="Life360",
-        data={},
-        source=SOURCE_USER,
-        options=asdict(options),
-    )
-    try:
-        v2_entry = create_config_entry(minor_version=1)
-    except TypeError:
-        v2_entry = create_config_entry()
-
-    # Cannot add a new config entry here since we're called from async_setup, which is
-    # called from setup.async_setup_component, which is at the point where our domain
-    # has not yet been added to hass.config.components (since async_setup hasn't
-    # finished yet.)
-    # If we did add a new config entry, config_entries.async_add would call its
-    # async_setup method with the new entry, which would see our domain is not in
-    # hass.config.components, so would call setup.async_setup_component, which would
-    # start an infinite loop.
-    # So, finish the remaining operations, including adding the new config entry, in a
-    # separate task.
-    hass.async_create_task(_finish_migration(hass, v2_entry, entities, entries))
-
-
 async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
     """Set up integration."""
-    # Migrate from version 1 - > 2 if necessary.
-    if entries := hass.config_entries.async_entries(DOMAIN):
-        version_1_seen = False
-        version_2_entry: ConfigEntry | None = None
-        for entry in entries:
-            match entry.version:
-                case 1:
-                    version_1_seen = True
-                case 2:
-                    assert version_2_entry is None
-                    version_2_entry = entry
-                case _:
-                    version = str(entry.version)
-                    minor_version = cast(
-                        int | None, getattr(entry, "minor_version", None)
-                    )
-                    if minor_version:
-                        version = f"{version}.{minor_version}"
-                    _LOGGER.error(
-                        "Unsupported configuration entry found: %s, version: %s",
-                        entry.title,
-                        version,
-                    )
-                    return False
-
-        if version_1_seen:
-            if version_2_entry:
-                # Migration was aborted while in progress.
-
-                # Make sure entity registry entries are associated with version 2
-                # config entry.
-                ent_reg = er.async_get(hass)
-                for entity in er.async_get(hass).entities.values():
-                    _migrate_entity(ent_reg, entity, version_2_entry.entry_id)
-
-                # Remove old entries.
-                for entry in entries:
-                    if entry.version == 2:
-                        continue
-                    await hass.config_entries.async_remove(entry.entry_id)
-            else:
-                _LOGGER.warning(
-                    "Migrating Life360 integration entries from version 1 to 2"
-                )
-                await _migrate_config_entries(hass, entries)
 
     @callback
     def update_location(call: ServiceCall) -> None:
@@ -189,6 +53,21 @@ async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
     )
 
     return True
+
+
+async def async_migrate_entry(_: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate config entry."""
+    # Currently, no migration is supported.
+    version = str(entry.version)
+    minor_version = cast(int | None, getattr(entry, "minor_version", None))
+    if minor_version:
+        version = f"{version}.{minor_version}"
+    _LOGGER.error(
+        "Unsupported configuration entry found: %s, version: %s; please remove it",
+        entry.title,
+        version,
+    )
+    return False
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -253,8 +132,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Remove config entry."""
-    # Don't delete store when migrating from version 1 config entry.
-    if entry.version == 1:
+    # Don't delete store when removing old version 1 config entry.
+    if entry.version < 2:
         return True
     await Life360Store(hass).remove()
     return True
