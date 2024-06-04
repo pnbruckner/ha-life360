@@ -41,10 +41,17 @@ click on the three dots next to "CONFIGURE" and select Reload.
 Please be patient since it could take a while due the above reasons before any new tracker entities are created.
 
 ## Installation
+### Remove `/config/life30` if Present
+
+If you have a folder named `life360` in your configuration folder (typically `/config`), remove it.
+This was a workaround from previous versions of the Life360 integration when it wasn't working.
+It contained earlier versions of the life360 package.
+
+### Procedure
 
 The integration software must first be installed as a custom component.
-
-You can use HACS to manage the installation and provide update notifications:
+You can use HACS to manage the installation and provide update notifications.
+Or you can manually install the software.
 
 <details>
 <summary>With HACS</summary>
@@ -66,8 +73,6 @@ You can use HACS to manage the installation and provide update notifications:
 
 </details>
 
-Or you can manually install the software:
-
 <details>
 <summary>Manual Installation</summary>
 
@@ -79,7 +84,9 @@ where `<config>` is your Home Assistant configuration directory.
 
 </details>
 
->__NOTE__: After it has been downloaded you will need to restart Home Assistant.
+### Post Installation
+
+After it has been downloaded you will need to restart Home Assistant.
 
 ## Configuration
 ### Add Integration Entry
