@@ -7,6 +7,13 @@ from functools import partial
 import logging
 from typing import cast
 
+try:
+    from life360 import NotFound  # noqa: F401
+except ImportError as err:
+    raise ImportError(
+        "If /config/life360 exists, remove it, restart Home Assistant, and try again"
+    ) from err
+
 import voluptuous as vol
 
 from homeassistant import config_entries

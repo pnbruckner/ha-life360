@@ -45,7 +45,7 @@ Please be patient since it could take a while due the above reasons before any n
 
 If you have a folder named `life360` in your configuration folder (typically `/config`), remove it.
 This was a workaround from previous versions of the Life360 integration when it wasn't working.
-It contained earlier versions of the life360 package.
+It contained earlier or experimental versions of the life360 pypi.org package.
 
 ### Procedure
 
