@@ -41,7 +41,7 @@ click on the three dots next to "CONFIGURE" and select Reload.
 Please be patient since it could take a while due the above reasons before any new tracker entities are created.
 
 ## Installation
-### Remove `/config/life30` if Present
+### Remove `/config/life360` if Present
 
 If you have a folder named `life360` in your configuration folder (typically `/config`), remove it.
 This was a workaround from previous versions of the Life360 integration when it wasn't working.
