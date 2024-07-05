@@ -443,7 +443,12 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                         )
                         warned = True
                     _LOGGER.debug(
-                        "%s: %s %s: will retry in %i s", aid, delay_reason, msg, delay
+                        "%s: %s %s: will retry (%i) in %i s",
+                        aid,
+                        delay_reason,
+                        msg,
+                        login_error_retries,
+                        delay,
                     )
                     await asyncio.sleep(delay)
                 request_task = self.config_entry.async_create_background_task(
