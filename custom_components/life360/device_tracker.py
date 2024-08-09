@@ -83,7 +83,9 @@ async def async_setup_entry(
                 old_entities.append(entity)
                 names.append(str(entity))
             _LOGGER.debug("Deleting entities: %s", ", ".join(names))
-            await asyncio.gather(*(entity.async_remove() for entity in old_entities))
+            await asyncio.gather(
+                *(entity.async_remove() for entity in old_entities if entity.enabled)
+            )
 
         if add_mids:
             new_entities: list[Life360DeviceTracker] = []

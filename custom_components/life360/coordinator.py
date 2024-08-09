@@ -30,7 +30,8 @@ from .const import (
     COMM_TIMEOUT,
     DOMAIN,
     LOGIN_ERROR_RETRY_DELAY,
-    MAX_LOGIN_ERROR_RETRIES,
+    LTD_LOGIN_ERROR_RETRY_DELAY,
+    MAX_LTD_LOGIN_ERROR_RETRIES,
     SIGNAL_ACCT_STATUS,
     UPDATE_INTERVAL,
 )
@@ -393,12 +394,15 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
         """Make a request to the Life360 server on behalf of Member coordinator."""
         await self._client_request_ok.wait()
 
-        task = cast(asyncio.Task, asyncio.current_task())
+        task = self.config_entry.async_create_background_task(
+            self.hass,
+            self._request(aid, target, *args, msg=msg),
+            f"Make client request to {aid}",
+        )
         self._client_tasks.add(task)
         try:
-            return await self._request(aid, target, *args, msg=msg)
+            return await task
         except asyncio.CancelledError:
-            task.uncancel()
             return RequestError.NO_DATA
         finally:
             self._client_tasks.discard(task)
@@ -439,7 +443,12 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                         )
                         warned = True
                     _LOGGER.debug(
-                        "%s: %s %s: will retry in %i s", aid, delay_reason, msg, delay
+                        "%s: %s %s: will retry (%i) in %i s",
+                        aid,
+                        delay_reason,
+                        msg,
+                        login_error_retries,
+                        delay,
                     )
                     await asyncio.sleep(delay)
                 request_task = self.config_entry.async_create_background_task(
@@ -482,13 +491,13 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                     if (
                         lrle_resp is LoginRateLimitErrResp.RETRY
                         or lrle_resp is LoginRateLimitErrResp.LTD_LOGIN_ERROR_RETRY
-                        and login_error_retries < MAX_LOGIN_ERROR_RETRIES
+                        and login_error_retries < MAX_LTD_LOGIN_ERROR_RETRIES
                     ):
                         self._set_acct_exc(aid)
                         if lrle_resp is LoginRateLimitErrResp.RETRY:
                             delay = LOGIN_ERROR_RETRY_DELAY
                         else:
-                            delay = 0
+                            delay = LTD_LOGIN_ERROR_RETRY_DELAY
                         delay_reason = "login error"
                         login_error_retries += 1
                         continue
