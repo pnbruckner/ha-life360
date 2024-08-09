@@ -52,8 +52,12 @@ jobs:
         # 0.13.115 -> HA 2024.4.4
         # 0.13.128 -> HA 2024.6.0b4 # Removed mypy-dev
         # 0.13.129 -> HA 2024.6.0b5
+        # 0.13.136 -> HA 2024.6.4
+        # 0.13.148 -> HA 2024.7.4
         include:
-          - hass-test-cc-version: "0.13.129"
+          - hass-test-cc-version: "0.13.136"
+            python-version: "3.12"
+          - hass-test-cc-version: "0.13.148"
             python-version: "3.12"
     steps:
       - name: 📥 Checkout the repository
