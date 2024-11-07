@@ -133,19 +133,19 @@ class LocationDetails:
 
     @staticmethod
     def to_datetime(value: Any) -> datetime:
-        """Extract value at key and convert to datetime.
+        """Extract value at key and convert to datetime in UTC.
 
         Raises ValueError if value is not a valid datetime or representation of one.
         """
         if isinstance(value, datetime):
-            return dt_util.as_local(value)
+            return dt_util.as_utc(value)
         try:
             parsed_value = dt_util.parse_datetime(value)
         except TypeError:
             raise ValueError from None
         if parsed_value is None:
             raise ValueError
-        return dt_util.as_local(parsed_value)
+        return dt_util.as_utc(parsed_value)
 
     @classmethod
     def from_dict(cls, restored: Mapping[str, Any]) -> Self:
@@ -178,7 +178,7 @@ class LocationDetails:
 
         return cls(
             address,
-            dt_util.as_local(dt_util.utc_from_timestamp(int(raw_loc["since"]))),
+            dt_util.utc_from_timestamp(int(raw_loc["since"])),
             bool(int(raw_loc["isDriving"])),
             # Life360 reports accuracy in feet, but Device Tracker expects
             # gps_accuracy in meters.
@@ -187,7 +187,7 @@ class LocationDetails:
                     float(raw_loc["accuracy"]), UnitOfLength.FEET, UnitOfLength.METERS
                 )
             ),
-            dt_util.as_local(dt_util.utc_from_timestamp(int(raw_loc["timestamp"]))),
+            dt_util.utc_from_timestamp(int(raw_loc["timestamp"])),
             float(raw_loc["latitude"]),
             float(raw_loc["longitude"]),
             raw_loc["name"] or None,
