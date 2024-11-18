@@ -225,7 +225,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
 
     async def _update_data(self, retry: bool) -> tuple[CirclesMembersData, bool]:
         """Update Life360 Circles & Members seen from all enabled accounts."""
-        start = dt_util.now()
+        start = dt_util.utcnow()
         _LOGGER.debug("Begin updating Circles & Members")
         cancelled = False
         try:
@@ -237,7 +237,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
             _LOGGER.debug(
                 "Updating Circles & Members %stook %s",
                 "(which was cancelled) " if cancelled else "",
-                dt_util.now() - start,
+                dt_util.utcnow() - start,
             )
 
     async def _do_update(self, retry: bool) -> tuple[CirclesMembersData, bool]:
@@ -421,7 +421,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
         if self._acct_data[aid].failed.is_set():
             return RequestError.NO_DATA
 
-        start = dt_util.now()
+        start = dt_util.utcnow()
         login_error_retries = 0
         delay: int | None = None
         delay_reason = ""
@@ -434,7 +434,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                 if delay is not None:
                     if (
                         not warned
-                        and (dt_util.now() - start).total_seconds() + delay > 60 * 60
+                        and (dt_util.utcnow() - start).total_seconds() + delay > 60 * 60
                     ):
                         _LOGGER.warning(
                             "Getting response from Life360 for %s "

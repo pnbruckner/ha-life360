@@ -25,6 +25,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import SpeedConverter
 from homeassistant.util.unit_system import METRIC_SYSTEM
 
@@ -272,10 +273,12 @@ class Life360DeviceTracker(
 
             attrs: dict[str, Any] = {
                 ATTR_ADDRESS: address,
-                ATTR_AT_LOC_SINCE: self._data.loc.details.at_loc_since,
+                ATTR_AT_LOC_SINCE: dt_util.as_local(
+                    self._data.loc.details.at_loc_since
+                ),
                 ATTR_BATTERY_CHARGING: self._data.loc.battery_charging,
                 ATTR_DRIVING: self.driving,
-                ATTR_LAST_SEEN: self._data.loc.details.last_seen,
+                ATTR_LAST_SEEN: dt_util.as_local(self._data.loc.details.last_seen),
                 ATTR_PLACE: self._data.loc.details.place,
                 ATTR_SPEED: speed,
                 ATTR_WIFI_ON: self._data.loc.wifi_on,
@@ -374,8 +377,8 @@ class Life360DeviceTracker(
                     "%s: Ignoring location update because "
                     "last_seen (%s) < previous last_seen (%s)",
                     self,
-                    last_seen,
-                    prev_seen,
+                    dt_util.as_local(last_seen),
+                    dt_util.as_local(prev_seen),
                 )
             if bad_accuracy and ATTR_GPS_ACCURACY not in self._ignored_update_reasons:
                 self._ignored_update_reasons.append(ATTR_GPS_ACCURACY)

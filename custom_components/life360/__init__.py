@@ -99,7 +99,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             mem_crd = MemberDataUpdateCoordinator(hass, coordinator, mid)
             config_entries.current_entry.set(entry_was)
             mem_coordinator[mid] = mem_crd
-            coros.append(mem_crd.async_config_entry_first_refresh())
+            coros.append(mem_crd.async_refresh())
         if coros:
             await asyncio.gather(*coros)
             if forward:
