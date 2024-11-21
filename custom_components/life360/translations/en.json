@@ -1,8 +1,7 @@
 {
     "config": {
         "abort": {
-            "reauth_successful": "Re-authentication was successful",
-            "single_instance_allowed": "Life360 supports only one configuration. Adding additional ones is not needed."
+            "reauth_successful": "Re-authentication was successful"
         },
         "create_entry": {
             "default": "Tracker entities cannot be created until list of Circles & Members is retrieved from server. Due to server restrictions, this could take ten minutes or more. Monitor progress via WARNING messages in system log."

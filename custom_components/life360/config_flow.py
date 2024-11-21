@@ -466,10 +466,6 @@ class Life360ConfigFlow(ConfigFlow, Life360Flow, domain=DOMAIN):
         self, _: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle a config flow initiated by the user."""
-        # manifest.json single_config_entry option added in 2024.3. Once versions before
-        # that are no longer supported, this check can be removed.
-        if self._async_current_entries():
-            return self.async_abort(reason="single_instance_allowed")
         return await self.async_step_init()
 
     async def async_step_done(self, _: dict[str, Any] | None = None) -> FlowResult:
