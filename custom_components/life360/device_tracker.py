@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Mapping
 from contextlib import suppress
 from copy import deepcopy
-from functools import cached_property
+from functools import cached_property  # pylint: disable=hass-deprecated-import
 import logging
 from typing import Any, cast
 

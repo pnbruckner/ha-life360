@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from functools import cached_property, partial
+from functools import cached_property, partial  # pylint: disable=hass-deprecated-import
 import logging
 from typing import cast
 
