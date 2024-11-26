@@ -759,3 +759,14 @@ class MemberDataUpdateCoordinator(DataUpdateCoordinator[MemberData]):
                 data.loc.details.place = place
 
         return data
+
+
+@dataclass
+class L360Coordinators:
+    """Life360 data update coordinators."""
+
+    coordinator: CirclesMembersDataUpdateCoordinator
+    mem_coordinator: dict[MemberID, MemberDataUpdateCoordinator]
+
+
+type L360ConfigEntry = ConfigEntry[L360Coordinators]

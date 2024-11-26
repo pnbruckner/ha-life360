@@ -26,7 +26,7 @@ MIGRATION_MESSAGE = "Migrating Life360 integration entries from version 1 to " +
 
 
 @pytest.fixture
-def setup_entry_mock(hass: HomeAssistant) -> Generator[AsyncMock, None, None]:
+def setup_entry_mock(hass: HomeAssistant) -> Generator[AsyncMock]:
     """Mock async_setup_entry."""
     with patch("custom_components.life360.async_setup_entry", autospec=True) as mock:
         # Teardown, in newer HA versions, will unload config entries. Add DOMAIN to
@@ -37,7 +37,7 @@ def setup_entry_mock(hass: HomeAssistant) -> Generator[AsyncMock, None, None]:
 
 
 @pytest.fixture(scope="module")
-def unload_entry_mock() -> Generator[AsyncMock, None, None]:
+def unload_entry_mock() -> Generator[AsyncMock]:
     """Mock async_unload_entry."""
     with patch("custom_components.life360.async_unload_entry", autospec=True) as mock:
         mock.return_value = True

@@ -27,7 +27,7 @@ def auto_enable_custom_integrations(enable_custom_integrations):
 
 
 @pytest.fixture(autouse=True)
-def MockStoreWorkAround() -> Generator[None, None, None]:
+def MockStoreWorkAround() -> Generator[None]:
     """Work around broken hass_storage in old pytest_homeassistant_custom_component."""
     # Versions before 0.13.54 did not use default encoder, so sets did not get converted
     # to lists, causing a JSON serialization error that was not caught. Work around the
@@ -49,7 +49,7 @@ def MockStoreWorkAround() -> Generator[None, None, None]:
 
 
 @pytest.fixture
-def dt_now() -> Generator[DtNowMock, None, None]:
+def dt_now() -> Generator[DtNowMock]:
     """Mock util.dt.now."""
     real = dt_util.now
     with patch("homeassistant.util.dt.now", autospec=True) as mock:
@@ -75,7 +75,7 @@ Life360API_Data = Mapping[str | None, Mapping[str, Life360API_SideEffect]]
 #
 # Any name/method not present in data will use default.
 @pytest.fixture(autouse=True)
-def MockLife360(request: pytest.FixtureRequest) -> Generator[MagicMock, None, None]:
+def MockLife360(request: pytest.FixtureRequest) -> Generator[MagicMock]:
     """Mock Life360."""
 
     if param := getattr(request, "param", None):

@@ -12,7 +12,6 @@ from typing import Any, cast
 
 from homeassistant.components.device_tracker import SourceType
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_BATTERY_CHARGING,
     ATTR_GPS_ACCURACY,
@@ -40,15 +39,11 @@ from .const import (
     ATTR_SPEED,
     ATTR_WIFI_ON,
     ATTRIBUTION,
-    DOMAIN,
     SIGNAL_MEMBERS_CHANGED,
     SIGNAL_UPDATE_LOCATION,
     STATE_DRIVING,
 )
-from .coordinator import (
-    CirclesMembersDataUpdateCoordinator,
-    MemberDataUpdateCoordinator,
-)
+from .coordinator import L360ConfigEntry, MemberDataUpdateCoordinator
 from .helpers import ConfigOptions, MemberData, MemberID, NoLocReason
 
 _LOGGER = logging.getLogger(__name__)
@@ -56,17 +51,12 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: L360ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the device tracker platform."""
-    coordinator = cast(
-        CirclesMembersDataUpdateCoordinator, hass.data[DOMAIN]["coordinator"]
-    )
-    mem_coordinator = cast(
-        dict[MemberID, MemberDataUpdateCoordinator],
-        hass.data[DOMAIN]["mem_coordinator"],
-    )
+    coordinator = entry.runtime_data.coordinator
+    mem_coordinator = entry.runtime_data.mem_coordinator
     entities: dict[MemberID, Life360DeviceTracker] = {}
 
     async def async_process_data() -> None:
@@ -122,7 +112,7 @@ class Life360DeviceTracker(
     _attr_attribution = ATTRIBUTION
     _attr_translation_key = "tracker"
     _attr_unique_id: MemberID
-    coordinator: MemberDataUpdateCoordinator
+    # coordinator: MemberDataUpdateCoordinator
     _warned_loc_unknown = False
 
     _unrecorded_attributes = frozenset(
@@ -412,7 +402,7 @@ class Life360DeviceTracker(
         self._prev_data = self._data
 
     async def _async_config_entry_updated(
-        self, _: HomeAssistant, entry: ConfigEntry
+        self, _: HomeAssistant, entry: L360ConfigEntry
     ) -> None:
         """Run when the config entry has been updated."""
         if self._options == (new_options := ConfigOptions.from_dict(entry.options)):

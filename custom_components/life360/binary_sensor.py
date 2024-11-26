@@ -11,13 +11,12 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import ATTRIBUTION, DOMAIN, SIGNAL_ACCT_STATUS
-from .coordinator import CirclesMembersDataUpdateCoordinator
+from .const import ATTRIBUTION, SIGNAL_ACCT_STATUS
+from .coordinator import CirclesMembersDataUpdateCoordinator, L360ConfigEntry
 from .helpers import AccountID, ConfigOptions
 
 _LOGGER = logging.getLogger(__name__)
@@ -25,16 +24,14 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: L360ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the binary sensory platform."""
-    coordinator = cast(
-        CirclesMembersDataUpdateCoordinator, hass.data[DOMAIN]["coordinator"]
-    )
+    coordinator = entry.runtime_data.coordinator
     entities: dict[AccountID, Life360BinarySensor] = {}
 
-    async def process_config(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    async def process_config(hass: HomeAssistant, entry: L360ConfigEntry) -> None:
         """Add and/or remove binary online sensors."""
         options = ConfigOptions.from_dict(entry.options)
         aids = set(options.accounts)
@@ -111,7 +108,7 @@ class Life360BinarySensor(BinarySensorEntity):
         )
 
     async def _async_config_entry_updated(
-        self, _: HomeAssistant, entry: ConfigEntry
+        self, _: HomeAssistant, entry: L360ConfigEntry
     ) -> None:
         """Run when the config entry has been updated."""
         enabled = ConfigOptions.from_dict(entry.options).accounts[self.aid].enabled
