@@ -17,7 +17,7 @@ except ImportError as err:
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.const import CONF_ENTITY_ID, Platform
+from homeassistant.const import CONF_ENTITY_ID, ENTITY_MATCH_ALL, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -44,7 +44,11 @@ _LOGGER = logging.getLogger(__name__)
 _PLATFORMS = [Platform.BINARY_SENSOR, Platform.DEVICE_TRACKER]
 
 _UPDATE_LOCATION_SCHEMA = vol.Schema(
-    {vol.Required(CONF_ENTITY_ID): vol.Any(vol.All(vol.Lower, "all"), cv.entity_ids)}
+    {
+        vol.Required(CONF_ENTITY_ID): vol.Any(
+            vol.All(vol.Lower, ENTITY_MATCH_ALL), cv.entity_ids
+        )
+    }
 )
 
 

@@ -15,6 +15,7 @@ from homeassistant.components.device_tracker.config_entry import TrackerEntity
 from homeassistant.const import (
     ATTR_BATTERY_CHARGING,
     ATTR_GPS_ACCURACY,
+    ENTITY_MATCH_ALL,
     STATE_NOT_HOME,
     STATE_UNKNOWN,
     UnitOfSpeed,
@@ -95,7 +96,7 @@ async def async_setup_entry(
             *(
                 entity.update_location()
                 for entity in entities.values()
-                if entity_id == "all" or entity.entity_id in entity_id
+                if entity_id == ENTITY_MATCH_ALL or entity.entity_id in entity_id
             )
         )
 
