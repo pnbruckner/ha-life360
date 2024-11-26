@@ -167,7 +167,7 @@ You can put whatever you want in the "Account identifier" box.
 
 ## Versions
 
-Home Assistant 2023.8 or newer is currently supported.
+This custom integration supports HomeAssistant versions 2024.8.3 or newer.
 
 ## Services
 
