@@ -12,7 +12,9 @@ import voluptuous as vol
 
 from homeassistant.config_entries import (
     ConfigEntry,
+    ConfigEntryBaseFlow,
     ConfigFlow,
+    ConfigFlowResult,
     OptionsFlowWithConfigEntry,
 )
 from homeassistant.const import (
@@ -23,7 +25,6 @@ from homeassistant.const import (
     UnitOfSpeed,
 )
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import FlowHandler, FlowResult
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.issue_registry import async_delete_issue
 from homeassistant.helpers.selector import (
@@ -61,7 +62,7 @@ LIMIT_GPS_ACC = "limit_gps_acc"
 SET_DRIVE_SPEED = "set_drive_speed"
 
 
-class Life360Flow(FlowHandler, ABC):
+class Life360Flow(ConfigEntryBaseFlow, ABC):
     """Life360 flow mixin."""
 
     _aid: AccountID | None
@@ -112,7 +113,7 @@ class Life360Flow(FlowHandler, ABC):
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Get basic options."""
         if user_input is not None:
             mga = cast(float | None, user_input.get(CONF_MAX_GPS_ACCURACY))
@@ -178,7 +179,9 @@ class Life360Flow(FlowHandler, ABC):
             last_step=False,
         )
 
-    async def async_step_acct_menu(self, _: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_acct_menu(
+        self, _: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Handle account options."""
         if not self._accts:
             return await self.async_step_add_acct()
@@ -197,7 +200,9 @@ class Life360Flow(FlowHandler, ABC):
             },
         )
 
-    async def async_step_add_acct(self, _: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_add_acct(
+        self, _: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Add an account."""
         self._aid = self._username = self._authorization = self._password = None
         self._enabled = True
@@ -205,7 +210,7 @@ class Life360Flow(FlowHandler, ABC):
 
     async def async_step_mod_acct_sel(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Select an account to modify."""
         if len(self._aids) == 1 or user_input is not None:
             if user_input is None:
@@ -228,7 +233,7 @@ class Life360Flow(FlowHandler, ABC):
 
     async def async_step_acct_type_menu(
         self, _: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Select account type."""
         return self.async_show_menu(
             step_id="acct_type_menu",
@@ -237,7 +242,7 @@ class Life360Flow(FlowHandler, ABC):
 
     async def async_step_acct_username_password(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Enter account username & password."""
         errors: dict[str, str] = {}
 
@@ -294,7 +299,7 @@ class Life360Flow(FlowHandler, ABC):
 
     async def async_step_acct_authorization(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Enter account username & authorization."""
         errors: dict[str, str] = {}
 
@@ -367,7 +372,7 @@ class Life360Flow(FlowHandler, ABC):
 
     async def async_step_del_accts(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Delete accounts."""
         if user_input is not None:
             for aid in cast(list[AccountID], user_input[CONF_ACCOUNTS]):
@@ -439,7 +444,9 @@ class Life360Flow(FlowHandler, ABC):
         )
 
     @abstractmethod
-    async def async_step_done(self, _: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_done(
+        self, _: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Finish the flow."""
 
 
@@ -460,15 +467,15 @@ class Life360ConfigFlow(ConfigFlow, Life360Flow, domain=DOMAIN):
         # Default first step is init.
         return Life360OptionsFlow(config_entry)
 
-    # When HA versions before 2024.4 are dropped, return types should be changed from
-    # FlowResult to ConfigFlowResult.
-    async def async_step_user(  # type: ignore[override]
+    async def async_step_user(
         self, _: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Handle a config flow initiated by the user."""
         return await self.async_step_init()
 
-    async def async_step_done(self, _: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_done(
+        self, _: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Finish the flow."""
         return self.async_create_entry(
             title="Life360", data={}, options=self._opts.as_dict()
@@ -483,7 +490,9 @@ class Life360OptionsFlow(OptionsFlowWithConfigEntry, Life360Flow):
         """Return mutable options class."""
         return ConfigOptions.from_dict(self.options)
 
-    async def async_step_done(self, _: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_done(
+        self, _: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Finish the flow."""
         # Delete repair issues for any accounts that were deleted, and for any accounts
         # that are still present and that were successfully reauthorized.
@@ -500,7 +509,7 @@ class Life360OptionsFlow(OptionsFlowWithConfigEntry, Life360Flow):
 
     async def async_step_accts_changed(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Delete accounts."""
         if user_input is None:
             return self.async_show_form(step_id="accts_changed")
