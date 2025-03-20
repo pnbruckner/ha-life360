@@ -136,6 +136,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: L360ConfigEntry) -> bool
 
 async def async_unload_entry(hass: HomeAssistant, entry: L360ConfigEntry) -> bool:
     """Unload config entry."""
+    # The coordinators will eventually be shut down when their listeners stop listening
+    # or ultimately when the config entry's "on unload" list is processed (which happens
+    # after this method returns.) And any background tasks created by the coordinators
+    # will be canceled after the "on unload" processing. But by then, resources those
+    # tasks were using may have disappeared. So, shut down the coordinators now to give
+    # them a chance to shutdown the background tasks themselves.
+    await asyncio.gather(
+        entry.runtime_data.coordinator.async_shutdown(),
+        *(
+            mem_crd.async_shutdown()
+            for mem_crd in entry.runtime_data.mem_coordinator.values()
+        )
+    )
     # Unload components for our platforms.
     return await hass.config_entries.async_unload_platforms(entry, _PLATFORMS)
 

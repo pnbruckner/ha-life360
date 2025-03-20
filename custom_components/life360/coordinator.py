@@ -104,6 +104,13 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
             self.config_entry.add_update_listener(self._config_entry_updated)
         )
 
+    async def async_shutdown(self) -> None:
+        """Cancel any scheduled call, and ignore new runs."""
+        await super().async_shutdown()
+        # Now that no new tasks should be created, stop any ongoing ones.
+        await self._stop_tasks()
+        self._delete_acct_data(list(self._acct_data))
+
     def acct_online(self, aid: AccountID) -> bool:
         """Return if account is online."""
         # When config updates and there's a new, enabled account, binary sensor could
@@ -614,20 +621,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
         if old_accts == new_accts:
             return
 
-        # Prevent any client requests from starting.
-        self._client_request_ok.clear()
-
-        # Stop everything.
-        tasks = set(self._client_tasks)
-        if self._fg_update_task:
-            tasks.add(self._fg_update_task)
-        if self._bg_update_task:
-            tasks.add(self._bg_update_task)
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        self._fg_update_task = None
-        self._bg_update_task = None
+        await self._stop_tasks()
 
         del_acct_ids = old_acct_ids - new_acct_ids
         self._delete_acct_data(del_acct_ids)
@@ -651,6 +645,23 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
 
         # Allow client requests to proceed.
         self._client_request_ok.set()
+
+    async def _stop_tasks(self) -> None:
+        """Stop all background tasks."""
+        # Prevent any client requests from starting.
+        self._client_request_ok.clear()
+
+        # Stop everything.
+        tasks = set(self._client_tasks)
+        if self._fg_update_task:
+            tasks.add(self._fg_update_task)
+            self._fg_update_task = None
+        if self._bg_update_task:
+            tasks.add(self._bg_update_task)
+            self._bg_update_task = None
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     def _create_acct_data(self, aids: Iterable[AccountID]) -> None:
         """Create data needed for each specified Life360 account."""
