@@ -62,8 +62,6 @@ jobs:
         # 0.13.215 -> HA 2025.2.5
         # 0.13.224 -> HA 2025.3.3
         include:
-          - hass-test-cc-version: "0.13.155"
-            python-version: "3.12"
           - hass-test-cc-version: "0.13.195"
             python-version: "3.13"
           - hass-test-cc-version: "0.13.205"
