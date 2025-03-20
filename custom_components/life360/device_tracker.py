@@ -101,8 +101,8 @@ async def async_setup_entry(
         )
 
     await async_process_data()
-    async_dispatcher_connect(hass, SIGNAL_MEMBERS_CHANGED, async_process_data)
-    async_dispatcher_connect(hass, SIGNAL_UPDATE_LOCATION, update_location)
+    entry.async_on_unload(async_dispatcher_connect(hass, SIGNAL_MEMBERS_CHANGED, async_process_data))
+    entry.async_on_unload(async_dispatcher_connect(hass, SIGNAL_UPDATE_LOCATION, update_location))
 
 
 class Life360DeviceTracker(
