@@ -17,8 +17,9 @@
         "step": {
             "init": {
                 "title": "Basic Options",
+                "description": "The GPS accuracy attribute defines the radius of a circle around the GPS point wherein the device is located. Hence, bigger numbers mean LESS accuracy. A limit to the accuracy radius may be set below, or it may be left blank. If set, any updates that are less accurate than this value will be ignored. If used, a good starting point is 100m.",
                 "data": {
-                    "max_gps_accuracy": "Max GPS accuracy",
+                    "max_gps_accuracy": "GPS accuracy radius limit",
                     "driving_speed": "Driving speed threshold",
                     "driving": "Show driving as state",
                     "verbosity": "DEBUG message verbosity"
@@ -101,8 +102,9 @@
         "step": {
             "init": {
                 "title": "Basic Options",
+                "description": "The GPS accuracy attribute defines the radius of a circle around the GPS point wherein the device is located. Hence, bigger numbers mean LESS accuracy. A limit to the accuracy radius may be set below, or it may be left blank. If set, any updates that are less accurate than this value will be ignored. If used, a good starting point is 100m.",
                 "data": {
-                    "max_gps_accuracy": "Max GPS accuracy",
+                    "max_gps_accuracy": "GPS accuracy radius limit",
                     "driving_speed": "Driving speed threshold",
                     "driving": "Show driving as state",
                     "verbosity": "DEBUG message verbosity"

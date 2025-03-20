@@ -102,7 +102,7 @@ Alternatively, go to Settings -> Devices & services and click the **`+ ADD INTEG
 Find or search for "Life360", click on it, then follow the prompts.
 
 ### Configuration Options
-#### Max GPS Accuracy
+#### GPS Accuracy Radius Limit
 
 Each location update has a GPS accuracy value (see the entity's corresponding attribute.)
 You can think of each update as a circle whose center is defined by latitude & longitude,
@@ -113,6 +113,9 @@ therefore the _less_ accurate the location fix.
 
 This configuration option can be used to reject location updates that are _less_ accurate
 (i.e., have _larger_ accuracy values) than the entered value (in meters.)
+Or it can be left blank, in which case updates will not be rejected due to their accuracy.
+If used, a value of 100m is recommended as a reasonable starting point.
+Adjust up or down depending on your desire for more updates, or fewer but more accurate updates.
 
 #### Driving Speed Threshold
 
