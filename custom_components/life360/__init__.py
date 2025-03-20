@@ -147,7 +147,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: L360ConfigEntry) -> boo
         *(
             mem_crd.async_shutdown()
             for mem_crd in entry.runtime_data.mem_coordinator.values()
-        )
+        ),
     )
     # Unload components for our platforms.
     return await hass.config_entries.async_unload_platforms(entry, _PLATFORMS)
