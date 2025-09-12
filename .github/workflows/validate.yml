@@ -60,13 +60,22 @@ jobs:
         # 0.13.205 -> HA 2025.1.4
         # --- 3.13
         # 0.13.215 -> HA 2025.2.5
-        # 0.13.224 -> HA 2025.3.3
+        # 0.13.225 -> HA 2025.3.4
+        # 0.13.236 -> HA 2025.4.4
+        # 0.13.246 -> HA 2025.5.3
+        # 0.13.254 -> HA 2025.6.3
+        # 0.13.264 -> HA 2025.7.4
+        # 0.13.272 -> HA 2025.8.3
+        # 0.13.278 -> HA 2025.9.1
         include:
+          # Oldest HA for Python 3.13
           - hass-test-cc-version: "0.13.195"
             python-version: "3.13"
+          # Newest HA for Python 3.12
           - hass-test-cc-version: "0.13.205"
             python-version: "3.12"
-          - hass-test-cc-version: "0.13.224"
+          # Newest HA
+          - hass-test-cc-version: "0.13.278"
             python-version: "3.13"
     steps:
       - name: 📥 Checkout the repository
