@@ -117,7 +117,6 @@ class Life360DeviceTracker(
     _attr_attribution = ATTRIBUTION
     _attr_translation_key = "tracker"
     _attr_unique_id: MemberID
-    # coordinator: MemberDataUpdateCoordinator
     _warned_loc_unknown = False
 
     _unrecorded_attributes = frozenset(
@@ -153,8 +152,10 @@ class Life360DeviceTracker(
     def __repr__(self) -> str:
         """Return identification string."""
         if name := (
-            self.registry_entry
-            and (self.registry_entry.name or self.registry_entry.original_name)
+            (
+                self.registry_entry
+                and (self.registry_entry.name or self.registry_entry.original_name)
+            )
             or self._data.details.name
         ):
             return f"{name} ({self.entity_id})"

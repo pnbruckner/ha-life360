@@ -201,7 +201,7 @@ class LocationData:
 
     details: LocationDetails
     battery_charging: bool = False
-    battery_level: int = 0
+    battery_level: int | None = None
     wifi_on: bool = False
 
     @classmethod
@@ -221,10 +221,12 @@ class LocationData:
     @classmethod
     def from_server(cls, raw_loc: Mapping[str, Any]) -> Self:
         """Initialize from Member's location data from server."""
+        if (battery_level := int(float(raw_loc["battery"]))) < 0:
+            battery_level = None
         return cls(
             LocationDetails.from_server(raw_loc),
             bool(int(raw_loc["charge"])),
-            int(float(raw_loc["battery"])),
+            battery_level,
             bool(int(raw_loc["wifiState"])),
         )
 

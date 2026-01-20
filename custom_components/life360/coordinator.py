@@ -495,9 +495,8 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                 except LoginError as exc:
                     self._acct_data[aid].session.cookie_jar.clear()
 
-                    if (
-                        lrle_resp is LoginRateLimitErrResp.RETRY
-                        or lrle_resp is LoginRateLimitErrResp.LTD_LOGIN_ERROR_RETRY
+                    if lrle_resp is LoginRateLimitErrResp.RETRY or (
+                        lrle_resp is LoginRateLimitErrResp.LTD_LOGIN_ERROR_RETRY
                         and login_error_retries < MAX_LTD_LOGIN_ERROR_RETRIES
                     ):
                         self._set_acct_exc(aid)
@@ -780,4 +779,4 @@ class L360Coordinators:
     mem_coordinator: dict[MemberID, MemberDataUpdateCoordinator]
 
 
-type L360ConfigEntry = ConfigEntry[L360Coordinators]
+L360ConfigEntry = ConfigEntry[L360Coordinators]
