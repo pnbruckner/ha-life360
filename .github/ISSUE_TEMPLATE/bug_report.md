@@ -20,19 +20,17 @@ Steps to reproduce the behavior:
 **Expected behavior**
 A clear and concise description of what you expected to happen.
 
+**System Log Messages**
+```text
+Past relevant log messages here.
+```
+
 **Screenshots**
 If applicable, add screenshots to help explain your problem.
 
-**Desktop (please complete the following information):**
- - OS: [e.g. iOS]
- - Browser [e.g. chrome, safari]
- - Version [e.g. 22]
-
-**Smartphone (please complete the following information):**
- - Device: [e.g. iPhone6]
- - OS: [e.g. iOS8.1]
- - Browser [e.g. stock browser, safari]
- - Version [e.g. 22]
+**Versions**
+ - Home Assistant Core: [e.g., 2025.1.0]
+ - Life360: [e.g., 0.5.0]
 
 **Additional context**
 Add any other context about the problem here.
