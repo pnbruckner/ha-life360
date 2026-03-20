@@ -366,7 +366,10 @@ class Life360Flow(ConfigEntryBaseFlow, ABC):
             step_id="acct_authorization",
             data_schema=data_schema,
             errors=errors,
-            description_placeholders={"action": "Modify" if self._aid else "Add"},
+            description_placeholders={
+                "action": "Modify" if self._aid else "Add",
+                "life360_login_url": "https://app.life360.com/login",
+            },
             last_step=False,
         )
 
