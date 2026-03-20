@@ -1,4 +1,4 @@
 -r requirements.txt
 
-# HA 2025.9.1
-pytest-homeassistant-custom-component==0.13.278
+# HA 2026.3.2
+pytest-homeassistant-custom-component==0.13.318
