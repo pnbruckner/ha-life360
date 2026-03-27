@@ -91,7 +91,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: L360ConfigEntry) -> bool
     await coordinator.async_config_entry_first_refresh()
     mem_coordinator: dict[MemberID, MemberDataUpdateCoordinator] = {}
 
-    async def async_process_data(forward: bool = False) -> None:
+    async def async_process_data(forward: bool) -> None:
         """Process Members."""
         mids = set(coordinator.data.mem_details)
         coros = [
@@ -111,12 +111,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: L360ConfigEntry) -> bool
                 async_dispatcher_send(hass, SIGNAL_MEMBERS_CHANGED)
 
     @callback
-    def process_data() -> None:
+    def process_data(forward: bool = True) -> None:
         """Process Members."""
         create_process_task = partial(
             entry.async_create_background_task,
             hass,
-            async_process_data(forward=True),
+            async_process_data(forward),
             "Process Members",
         )
         # eager_start parameter was added in 2024.3.
@@ -125,7 +125,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: L360ConfigEntry) -> bool
         except TypeError:
             create_process_task()
 
-    await async_process_data()
+    process_data(forward=False)
     entry.async_on_unload(coordinator.async_add_listener(process_data))
     entry.runtime_data = L360Coordinators(coordinator, mem_coordinator)
 

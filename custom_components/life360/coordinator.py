@@ -18,7 +18,6 @@ from life360 import Life360Error, LoginError, NotFound, NotModified, RateLimited
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -27,7 +26,6 @@ from homeassistant.util import dt as dt_util
 from . import helpers
 from .const import (
     COMM_MAX_RETRIES,
-    COMM_TIMEOUT,
     DOMAIN,
     LOGIN_ERROR_RETRY_DELAY,
     LTD_LOGIN_ERROR_RETRY_DELAY,
@@ -46,6 +44,7 @@ from .helpers import (
     MemberDetails,
     MemberID,
     NoLocReason,
+    get_session,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -668,7 +667,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
             acct = self._options.accounts[aid]
             if not acct.enabled:
                 continue
-            session = async_create_clientsession(self.hass, timeout=COMM_TIMEOUT)
+            session = get_session(self.hass)
             name = aid if self._options.verbosity >= 3 else f"Account {idx + 1}"
             api = helpers.Life360(
                 session,

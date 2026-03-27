@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from functools import cached_property  # pylint: disable=hass-deprecated-import
-import logging
 from typing import Any, cast
 
 from life360 import CommError, Life360Error, LoginError
@@ -25,7 +24,6 @@ from homeassistant.const import (
     UnitOfSpeed,
 )
 from homeassistant.core import callback
-from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.issue_registry import async_delete_issue
 from homeassistant.helpers.selector import (
     BooleanSelector,
@@ -44,7 +42,6 @@ from homeassistant.util.unit_system import METRIC_SYSTEM
 from . import helpers
 from .const import (
     COMM_MAX_RETRIES,
-    COMM_TIMEOUT,
     CONF_ACCOUNTS,
     CONF_AUTHORIZATION,
     CONF_DRIVING_SPEED,
@@ -54,9 +51,7 @@ from .const import (
     CONF_VERBOSITY,
     DOMAIN,
 )
-from .helpers import Account, AccountID, ConfigOptions
-
-_LOGGER = logging.getLogger(__name__)
+from .helpers import Account, AccountID, ConfigOptions, get_session
 
 LIMIT_GPS_ACC = "limit_gps_acc"
 SET_DRIVE_SPEED = "set_drive_speed"
@@ -414,7 +409,7 @@ class Life360Flow(ConfigEntryBaseFlow, ABC):
 
         # Check that credentials work by getting new authorization & testing it.
         if self._enabled:
-            session = async_create_clientsession(self.hass, timeout=COMM_TIMEOUT)
+            session = get_session(self.hass)
             try:
                 name = self._username if self._opts.verbosity >= 3 else None
                 api = helpers.Life360(
