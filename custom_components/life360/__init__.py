@@ -104,11 +104,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: L360ConfigEntry) -> bool
             mem_crd = MemberDataUpdateCoordinator(hass, coordinator, mid)
             config_entries.current_entry.set(entry_was)
             mem_coordinator[mid] = mem_crd
-            coros.append(mem_crd.async_refresh())
+            # Do not block entry setup or member discovery on an initial refresh.
+            # These requests can sit in long retry loops when Life360 is returning
+            # transient 403s, which causes Home Assistant to cancel setup entirely.
+            entry.async_create_background_task(
+                hass,
+                mem_crd.async_refresh(),
+                f"Refresh Member {mid}",
+            )
         if coros:
             await asyncio.gather(*coros)
             if forward:
                 async_dispatcher_send(hass, SIGNAL_MEMBERS_CHANGED)
+        elif forward:
+            async_dispatcher_send(hass, SIGNAL_MEMBERS_CHANGED)
 
     @callback
     def process_data() -> None:

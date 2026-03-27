@@ -493,7 +493,11 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                     return RequestError.NOT_MODIFIED
 
                 except LoginError as exc:
-                    self._acct_data[aid].session.cookie_jar.clear()
+                    api = self._acct_data[aid].api
+                    if clear_cookies := getattr(api, "clear_cookies", None):
+                        clear_cookies()
+                    else:
+                        self._acct_data[aid].session.cookie_jar.clear()
 
                     if lrle_resp is LoginRateLimitErrResp.RETRY or (
                         lrle_resp is LoginRateLimitErrResp.LTD_LOGIN_ERROR_RETRY
@@ -690,6 +694,12 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
         for aid in aids:
             acct = self._acct_data.pop(aid)
             acct.session.detach()
+            if close := getattr(acct.api, "async_close", None):
+                self.config_entry.async_create_task(
+                    self.hass,
+                    close(),
+                    f"Close curl session for {aid}",
+                )
             acct.failed_task.cancel()
 
 

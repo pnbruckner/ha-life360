@@ -432,6 +432,8 @@ class Life360Flow(ConfigEntryBaseFlow, ABC):
                     assert self._authorization is not None
                     authorization = self._authorization
             finally:
+                if close := getattr(locals().get("api"), "async_close", None):
+                    await close()
                 session.detach()
         elif self._authorization is not None:
             authorization = self._authorization

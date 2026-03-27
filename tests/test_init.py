@@ -17,6 +17,7 @@ from custom_components.life360.const import (
     MAX_LTD_LOGIN_ERROR_RETRIES,
     UPDATE_INTERVAL,
 )
+from custom_components.life360.coordinator import MemberDataUpdateCoordinator
 from custom_components.life360.helpers import AccountID, ConfigOptions, MemberID
 from life360 import LoginError
 import pytest
@@ -524,6 +525,79 @@ async def test_reload_new_member(hass: HomeAssistant, hass_storage: MutableStora
     # Now there are two Members.
     cast(list[str], circles[cir1["id"]]["mids"]).append(cast(str, mem2["id"]))
     assert_stored_data(hass_storage, circles, [mem1, mem2])
+
+
+@pytest.mark.parametrize(
+    "MockLife360",
+    [
+        {
+            "aid1": {
+                "get_circles": [LoginError("TEST: Forbidden"), [cir1]],
+                "get_circle_members": repeat([mem1]),
+            },
+        },
+    ],
+    indirect=["MockLife360"],
+)
+async def test_setup_does_not_wait_for_member_refresh(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    hass_storage: MutableStorage,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test entry setup is not blocked by a stalled member refresh."""
+    mem1_info = MemberInfo.from_data(mem1)
+    hass_storage[DOMAIN] = {
+        "version": 1,
+        "data": {
+            "circles": {
+                cir1["id"]: {
+                    "name": cir1["name"],
+                    "aids": ["aid1"],
+                    "mids": [mem1_info.mid],
+                }
+            },
+            "mem_details": {
+                mem1_info.mid: {
+                    "name": mem1_info.name,
+                    "entity_picture": mem1_info.entity_picture,
+                }
+            },
+        },
+    }
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def block_refresh(_: MemberDataUpdateCoordinator) -> None:
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr(MemberDataUpdateCoordinator, "async_refresh", block_refresh)
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=Life360ConfigFlow.VERSION,
+        options=cfg_options(1, verbosity=3),
+    )
+    entry.add_to_hass(hass)
+
+    with assert_setup_component(0, DOMAIN):
+        setup_task = asyncio.create_task(async_setup_component(hass, DOMAIN, {}))
+        try:
+            await asyncio.wait_for(started.wait(), timeout=1)
+            assert await asyncio.wait_for(asyncio.shield(setup_task), timeout=1)
+        finally:
+            release.set()
+            await hass.async_block_till_done()
+
+    entity_id = entity_registry.async_get_entity_id(
+        DT_DOMAIN, DOMAIN, MemberID(cast(str, mem1["id"]))
+    )
+    assert entity_id
+    state = hass.states.get(entity_id)
+    assert state
+    assert state.state == STATE_UNKNOWN
 
 
 LOGIN_ERROR_MESSAGE = "TEST: Login error"

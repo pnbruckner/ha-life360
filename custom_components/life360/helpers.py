@@ -8,7 +8,7 @@ from datetime import datetime
 from enum import IntEnum
 from typing import Any, NewType, Self, cast
 
-from life360 import Life360
+from .api import Life360
 
 from homeassistant.const import CONF_ENABLED, CONF_PASSWORD, UnitOfLength
 from homeassistant.core import HomeAssistant
