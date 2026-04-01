@@ -6,18 +6,35 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import IntEnum
+import logging
 from typing import Any, NewType, Self, cast
 
+from aiohttp import ClientSession
 from life360 import Life360
 
-from homeassistant.const import CONF_ENABLED, CONF_PASSWORD, UnitOfLength
-from homeassistant.core import HomeAssistant
+from homeassistant.const import (
+    CONF_ENABLED,
+    CONF_PASSWORD,
+    EVENT_HOMEASSISTANT_CLOSE,
+    MAJOR_VERSION,
+    MINOR_VERSION,
+    UnitOfLength,
+)
+from homeassistant.core import Event, HomeAssistant
+from homeassistant.helpers.aiohttp_client import (
+    MAXIMUM_CONNECTIONS,
+    MAXIMUM_CONNECTIONS_PER_HOST,
+    HomeAssistantTCPConnector,
+    _async_get_or_create_resolver,
+    async_create_clientsession,
+)
 from homeassistant.helpers.restore_state import ExtraStoredData
 from homeassistant.helpers.storage import Store
-from homeassistant.util import dt as dt_util
+from homeassistant.util import dt as dt_util, ssl as ssl_util
 from homeassistant.util.unit_conversion import DistanceConverter
 
 from .const import (
+    COMM_TIMEOUT,
     CONF_ACCOUNTS,
     CONF_AUTHORIZATION,
     CONF_DRIVING_SPEED,
@@ -29,6 +46,8 @@ from .const import (
     SPEED_FACTOR_MPH,
 )
 
+_LOGGER = logging.getLogger(__name__)
+
 # So testing can patch in one place.
 LIFE360 = Life360
 
@@ -36,6 +55,35 @@ LIFE360 = Life360
 AccountID = NewType("AccountID", str)
 CircleID = NewType("CircleID", str)
 MemberID = NewType("MemberID", str)
+
+
+def get_session(hass: HomeAssistant) -> ClientSession:
+    """Get a new ClientSession."""
+    session = async_create_clientsession(hass, timeout=COMM_TIMEOUT)
+    if (MAJOR_VERSION, MINOR_VERSION) < (2026, 2):
+        return session
+
+    # Starting in 2026.2, the SSLContext object seems to upset the Life360
+    # server, or more likely, Cloudflare. Create a new connector with the
+    # older style SSLContext object, and use that instead with the
+    # ClientSession.
+    _LOGGER.debug("Creating new TCPConnector with older SSLContext")
+    ssl_context = ssl_util.client_context()
+    connector = HomeAssistantTCPConnector(
+        ssl=ssl_context,
+        limit=MAXIMUM_CONNECTIONS,
+        limit_per_host=MAXIMUM_CONNECTIONS_PER_HOST,
+        resolver=_async_get_or_create_resolver(hass),
+    )
+    session._connector = connector
+
+    async def close_connector(event: Event) -> None:
+        """Close connector pool."""
+        await connector.close()
+
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_CLOSE, close_connector)
+
+    return session
 
 
 @dataclass

@@ -164,6 +164,7 @@ async def test_no_circles_members(
     with assert_setup_component(0, DOMAIN):
         assert await async_setup_component(hass, DOMAIN, {})
         await hass.async_block_till_done()
+        await asyncio.sleep(0.1)
 
     # Check WARNING messages.
     expected = 1 if store_data is None else 0
@@ -300,6 +301,7 @@ async def test_circles_members_no_loc(
     with assert_setup_component(0, DOMAIN):
         assert await async_setup_component(hass, DOMAIN, {})
         await hass.async_block_till_done()
+        await asyncio.sleep(0.1)
 
     # Check that a device_tracker entity has been created for each Member.
     for mem_info in [MemberInfo.from_data(member) for member in members]:
@@ -387,6 +389,7 @@ async def test_circles_members_delayed(
     with assert_setup_component(0, DOMAIN):
         assert await async_setup_component(hass, DOMAIN, {})
         await hass.async_block_till_done()
+        await asyncio.sleep(0.1)
 
     # First retrieval of Circles failed, but second attempt succeeded.
     # There should now be two Members.
@@ -442,6 +445,7 @@ async def test_acct_added(
     with assert_setup_component(0, DOMAIN):
         assert await async_setup_component(hass, DOMAIN, {})
         await hass.async_block_till_done()
+        await asyncio.sleep(0.1)
 
     aid1 = AccountID("aid1")
     mid1 = MemberID(cast(str, mem1["id"]))
@@ -511,6 +515,7 @@ async def test_reload_new_member(hass: HomeAssistant, hass_storage: MutableStora
     with assert_setup_component(0, DOMAIN):
         assert await async_setup_component(hass, DOMAIN, {})
         await hass.async_block_till_done()
+        await asyncio.sleep(0.1)
 
     # Initially there is only one Member.
     circles = {
@@ -520,6 +525,7 @@ async def test_reload_new_member(hass: HomeAssistant, hass_storage: MutableStora
 
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
 
     # Now there are two Members.
     cast(list[str], circles[cir1["id"]]["mids"]).append(cast(str, mem2["id"]))
@@ -598,6 +604,7 @@ async def test_login_error(
     with assert_setup_component(0, DOMAIN):
         assert await async_setup_component(hass, DOMAIN, {})
         await hass.async_block_till_done()
+        await asyncio.sleep(0.1)
 
     aid = AccountID("aid1")
     mid = MemberID(cast(str, mem1["id"]))
@@ -696,6 +703,7 @@ async def test_remove_entry(
     with assert_setup_component(0, DOMAIN):
         assert await async_setup_component(hass, DOMAIN, {})
         await hass.async_block_till_done()
+        await asyncio.sleep(0.1)
 
     # Check that account binary online sensor exists and is on.
     bs_entity_id = entity_registry.async_get_entity_id(BS_DOMAIN, DOMAIN, "aid1")
@@ -711,6 +719,7 @@ async def test_remove_entry(
     # Remove config entry.
     assert await hass.config_entries.async_remove(entry.entry_id)
     await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
 
     # Check that binary online sensor is gone.
     state = hass.states.get(bs_entity_id)
