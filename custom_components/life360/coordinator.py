@@ -83,13 +83,15 @@ class RequestError(Enum):
 class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersData]):
     """Circles & Members data update coordinator."""
 
-    config_entry: ConfigEntry
+    config_entry: L360ConfigEntry
     _bg_update_task: asyncio.Task | None = None
     _fg_update_task: asyncio.Task | None = None
 
-    def __init__(self, hass: HomeAssistant, store: Life360Store) -> None:
+    def __init__(
+        self, hass: HomeAssistant, entry: L360ConfigEntry, store: Life360Store
+    ) -> None:
         """Initialize data update coordinator."""
-        super().__init__(hass, _LOGGER, name="Circles & Members")
+        super().__init__(hass, _LOGGER, config_entry=entry, name="Circles & Members")
         self._store = store
         self.data = self._data_from_store()
         self._options = ConfigOptions.from_dict(self.config_entry.options)
@@ -695,22 +697,25 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
 class MemberDataUpdateCoordinator(DataUpdateCoordinator[MemberData]):
     """Member data update coordinator."""
 
-    config_entry: ConfigEntry
+    config_entry: L360ConfigEntry
 
     def __init__(
         self,
         hass: HomeAssistant,
-        coordinator: CirclesMembersDataUpdateCoordinator,
+        entry: L360ConfigEntry,
         mid: MemberID,
     ) -> None:
         """Initialize data update coordinator."""
+        coordinator = entry.runtime_data.coordinator
         mem_details = coordinator.data.mem_details[mid]
         super().__init__(
-            hass, _LOGGER, name=mem_details.name, update_interval=UPDATE_INTERVAL
+            hass,
+            _LOGGER,
+            config_entry=entry,
+            name=mem_details.name,
+            update_interval=UPDATE_INTERVAL,
+            always_update=False,
         )
-        # always_update added in 2023.9.
-        if hasattr(self, "always_update"):
-            self.always_update = False
         self.data = MemberData(mem_details)
         self._coordinator = coordinator
         self._mid = mid

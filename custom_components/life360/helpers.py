@@ -75,7 +75,7 @@ def get_session(hass: HomeAssistant) -> ClientSession:
         limit_per_host=MAXIMUM_CONNECTIONS_PER_HOST,
         resolver=_async_get_or_create_resolver(hass),
     )
-    session._connector = connector
+    session._connector = connector  # noqa: SLF001
 
     async def close_connector(event: Event) -> None:
         """Close connector pool."""
@@ -172,7 +172,7 @@ class LocationDetails:
     address: str | None
     at_loc_since: datetime
     driving: bool
-    gps_accuracy: int  # meters
+    gps_accuracy: float  # meters
     last_seen: datetime
     latitude: float
     longitude: float
@@ -233,7 +233,8 @@ class LocationDetails:
             round(
                 DistanceConverter.convert(
                     float(raw_loc["accuracy"]), UnitOfLength.FEET, UnitOfLength.METERS
-                )
+                ),
+                1,
             ),
             dt_util.utc_from_timestamp(int(raw_loc["timestamp"])),
             float(raw_loc["latitude"]),

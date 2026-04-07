@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from functools import cached_property, partial  # pylint: disable=hass-deprecated-import
+from functools import partial
 import logging
 from typing import cast
+
+from propcache.api import cached_property
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,

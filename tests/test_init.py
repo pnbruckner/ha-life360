@@ -47,7 +47,7 @@ from homeassistant.helpers import entity_registry as er, issue_registry as ir
 from homeassistant.setup import async_setup_component
 from homeassistant.util import slugify
 
-from .common import DtNowMock, assert_log_messages
+from .common import DtNowMock, assert_log_messages  # noqa: TID251
 
 StoreData = Mapping[str, Mapping[str, Mapping[str, Any]]]
 MutableStoreData = MutableMapping[str, MutableMapping[str, MutableMapping[str, Any]]]

@@ -15,7 +15,7 @@ import pytest
 
 from homeassistant.util import dt as dt_util
 
-from .common import DtNowMock
+from .common import DtNowMock  # noqa: TID251
 
 pytest_plugins = ["pytest_homeassistant_custom_component"]
 

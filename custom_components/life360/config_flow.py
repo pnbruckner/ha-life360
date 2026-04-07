@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from functools import cached_property  # pylint: disable=hass-deprecated-import
 from typing import Any, cast
 
 from life360 import CommError, Life360Error, LoginError
+from propcache.api import cached_property
 import voluptuous as vol
 
 from homeassistant.config_entries import (
@@ -14,7 +14,7 @@ from homeassistant.config_entries import (
     ConfigEntryBaseFlow,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlowWithConfigEntry,
+    OptionsFlow,
 )
 from homeassistant.const import (
     CONF_ENABLED,
@@ -463,7 +463,7 @@ class Life360ConfigFlow(ConfigFlow, Life360Flow, domain=DOMAIN):
     def async_get_options_flow(config_entry: ConfigEntry) -> Life360OptionsFlow:
         """Get the options flow for this handler."""
         # Default first step is init.
-        return Life360OptionsFlow(config_entry)
+        return Life360OptionsFlow()
 
     async def async_step_user(
         self, _: dict[str, Any] | None = None
@@ -480,13 +480,13 @@ class Life360ConfigFlow(ConfigFlow, Life360Flow, domain=DOMAIN):
         )
 
 
-class Life360OptionsFlow(OptionsFlowWithConfigEntry, Life360Flow):
+class Life360OptionsFlow(OptionsFlow, Life360Flow):
     """Life360 integration options flow."""
 
     @cached_property
     def _opts(self) -> ConfigOptions:
         """Return mutable options class."""
-        return ConfigOptions.from_dict(self.options)
+        return ConfigOptions.from_dict(self.config_entry.options)
 
     async def async_step_done(
         self, _: dict[str, Any] | None = None
@@ -494,7 +494,7 @@ class Life360OptionsFlow(OptionsFlowWithConfigEntry, Life360Flow):
         """Finish the flow."""
         # Delete repair issues for any accounts that were deleted, and for any accounts
         # that are still present and that were successfully reauthorized.
-        old_opts = ConfigOptions.from_dict(self.options)
+        old_opts = ConfigOptions.from_dict(self.config_entry.options)
         del_aids = set(old_opts.accounts) - set(self._opts.accounts)
         for aid in del_aids | self._authorized_aids:
             async_delete_issue(self.hass, DOMAIN, aid)
