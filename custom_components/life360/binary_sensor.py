@@ -64,12 +64,14 @@ class Life360BinarySensor(BinarySensorEntity):
     _attr_attribution = ATTRIBUTION
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_should_poll = False
+    _attr_has_entity_name = True
+    _attr_translation_key = "online"
 
     def __init__(
         self, coordinator: CirclesMembersDataUpdateCoordinator, aid: AccountID
     ) -> None:
         """Initialize binary sensor."""
-        self._attr_name = f"Life360 online ({aid})"
+        self._attr_translation_placeholders = {"acct_id": aid}
         self._attr_unique_id = aid
         self._enabled = (
             ConfigOptions.from_dict(coordinator.config_entry.options)

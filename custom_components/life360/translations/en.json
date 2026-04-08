@@ -82,6 +82,11 @@
                     "driving": "Driving"
                 }
             }
+        },
+        "binary_sensor": {
+            "online": {
+                "name": "Life360 online ({acct_id})"
+            }
         }
     },
     "issues": {
