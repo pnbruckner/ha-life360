@@ -148,11 +148,11 @@ empty_store: StoreData = {"circles": {}, "mem_details": {}}
 async def test_no_circles_members(
     hass: HomeAssistant,
     entity_registry: er.EntityRegistry,
-    hass_storage: MutableStorage,
+    hass_storage: dict[str, Any],
     caplog: pytest.LogCaptureFixture,
     options: dict[str, Any],
     store_data: StoreData | None,
-):
+) -> None:
     """Test w/ no Circles or Members, w/ or w/o store data."""
     if store_data is not None:
         hass_storage[DOMAIN] = {"version": 1, "data": store_data}
@@ -264,7 +264,7 @@ def get_circle_member(
                     "get_circle_members": repeat([mem1, mem2]),
                     "get_circle_member": partial(
                         get_circle_member,
-                        {cir1["id"]: {mem1["id"]: mem1, mem2["id"]: mem2}},
+                        {cir1["id"]: {mem1["id"]: mem1, mem2["id"]: mem2}},  # type: ignore[dict-item]
                     ),
                 },
             },
@@ -284,11 +284,11 @@ def get_circle_member(
 async def test_circles_members_no_loc(
     hass: HomeAssistant,
     entity_registry: er.EntityRegistry,
-    hass_storage: MutableStorage,
+    hass_storage: dict[str, Any],
     caplog: pytest.LogCaptureFixture,
     circles: Mapping[str, Mapping[str, Any]],
     members: Iterable[Mapping[str, Any]],
-):
+) -> None:
     """Test w/ Circles & Members w/ no location data."""
     # Use higher verbosity so that API name is AccountID.
     entry = MockConfigEntry(
@@ -349,7 +349,7 @@ async def test_circles_members_no_loc(
                 "get_circle_members": repeat([mem1, mem2]),
                 "get_circle_member": partial(
                     get_circle_member,
-                    {cir1["id"]: {mem1["id"]: mem1, mem2["id"]: mem2}},
+                    {cir1["id"]: {mem1["id"]: mem1, mem2["id"]: mem2}},  # type: ignore[dict-item]
                 ),
             },
         },
@@ -358,9 +358,9 @@ async def test_circles_members_no_loc(
 )
 async def test_circles_members_delayed(
     hass: HomeAssistant,
-    hass_storage: MutableStorage,
+    hass_storage: dict[str, Any],
     caplog: pytest.LogCaptureFixture,
-):
+) -> None:
     """Test w/ Circles & Members w/ first request fails."""
     # Start with Circle & one Member in storage.
     mem1_info = MemberInfo.from_data(mem1)
@@ -431,7 +431,7 @@ async def test_circles_members_delayed(
 async def test_acct_added(
     hass: HomeAssistant,
     entity_registry: er.EntityRegistry,
-):
+) -> None:
     """Test account added after initial setup."""
     # Start with one account.
     # Use higher verbosity so that API name is AccountID.
@@ -495,14 +495,16 @@ async def test_acct_added(
                 "get_circle_members": iter([[mem1], [mem1, mem2]]),
                 "get_circle_member": partial(
                     get_circle_member,
-                    {cir1["id"]: {mem1["id"]: mem1, mem2["id"]: mem2}},
+                    {cir1["id"]: {mem1["id"]: mem1, mem2["id"]: mem2}},  # type: ignore[dict-item]
                 ),
             },
         },
     ],
     indirect=["MockLife360"],
 )
-async def test_reload_new_member(hass: HomeAssistant, hass_storage: MutableStorage):
+async def test_reload_new_member(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
     """Test reload with new Member after reload."""
     # Use higher verbosity so that API name is AccountID.
     entry = MockConfigEntry(
@@ -589,7 +591,7 @@ async def test_login_error(
     caplog: pytest.LogCaptureFixture,
     dt_now: DtNowMock,
     too_many_errors: bool,
-):
+) -> None:
     """Test login error while getting Member data."""
     dt_now_real, dt_now_mock = dt_now
 
@@ -687,7 +689,7 @@ async def test_login_error(
 async def test_remove_entry(
     hass: HomeAssistant,
     entity_registry: er.EntityRegistry,
-    hass_storage: MutableStorage,
+    hass_storage: dict[str, Any],
 ) -> None:
     """Test config entry removal."""
     hass_storage[DOMAIN] = {"version": 1, "data": empty_store}
