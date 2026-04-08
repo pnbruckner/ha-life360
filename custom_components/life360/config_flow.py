@@ -332,8 +332,8 @@ class Life360Flow(ConfigEntryBaseFlow, ABC):
                 vol.Required(CONF_USERNAME): TextSelector(
                     TextSelectorConfig(type=TextSelectorType.EMAIL)
                 ),
-                vol.Required(CONF_TOKEN_TYPE): TextSelector(),
                 vol.Required(CONF_AUTHORIZATION): TextSelector(),
+                vol.Required(CONF_TOKEN_TYPE): TextSelector(),
                 vol.Required(CONF_ENABLED): BooleanSelector(),
             }
         )

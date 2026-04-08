@@ -150,9 +150,10 @@ Once a phone number has been verified, the Life360 server will no longer allow t
 
 Enter the Life360 account's email address & password.
 
-##### Access Type & Token
+##### Access Token
 
 This method is effectively a work around for accounts that have had a phone number "verified."
+Or it may be used if for whatever other reason the username & password method does not work.
 In theory, there is a way to "login" to the Life360 server using a phone number and a code sent via SMS.
 However, I have not been able to get that to work.
 
@@ -163,8 +164,8 @@ Log into Life360.
 When the process has been completed look for the "token" packet.
 (If there is one labeled "preflight", uses the OPTIONS method, or has no preview/response data,
 ignore it and look for another "token" packet which uses the POST method and has data.)
-Under the Preview or Response tab, look for `token_type` & `access_token`.
-Copy those values into the corresponding boxes (access type & access token) on the HA account page.
+Under the Preview or Response tab, look for `access_token` & `token_type`.
+Copy those values into the corresponding boxes (access token & token type) on the HA account page.
 (Note that the `token_type` is almost certainly "Bearer".)
 You can put whatever you want in the "Account identifier" box.
 
