@@ -36,8 +36,9 @@ jobs:
     strategy:
       matrix:
         # HA Python versions
+        #   See core/.python-version*
         #   See core/.github/workflows/ci.yaml:
-        #   ALL_PYTHON_VERSIONS & DEFAULT_PYTHON*
+        #   ADDITIONAL_PYTHON_VERSIONS
         # ---------------------------------------
         # HA 2024.4  -> 3.12
         # HA 2024.12 -> 3.12*, 3.13
@@ -80,9 +81,8 @@ jobs:
         # 0.13.316 -> HA 2026.2.3
         # --- 3.14.2
         # 0.13.320 -> HA 2026.3.4
+        # 0.13.322 -> HA 2026.4.1
         include:
-          - hass-test-cc-version: "0.13.252"
-            python-version: "3.13"
           - hass-test-cc-version: "0.13.297"
             python-version: "3.13"
           - hass-test-cc-version: "0.13.297"
@@ -91,7 +91,7 @@ jobs:
             python-version: "3.13.11"
           - hass-test-cc-version: "0.13.316"
             python-version: "3.14.2"
-          - hass-test-cc-version: "0.13.320"
+          - hass-test-cc-version: "0.13.322"
             python-version: "3.14.2"
     steps:
       - name: 📥 Checkout the repository
