@@ -16,7 +16,7 @@ from pytest_homeassistant_custom_component.common import (
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
 
-from .common import assert_log_messages
+from .common import assert_log_messages  # noqa: TID251
 
 MIGRATION_MESSAGE = "Migrating Life360 integration entries from version 1 to " + str(
     Life360ConfigFlow.VERSION
