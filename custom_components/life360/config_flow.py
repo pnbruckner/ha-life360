@@ -316,8 +316,6 @@ class Life360Flow(ConfigEntryBaseFlow, ABC):
                 self._enabled = cast(bool, user_input[CONF_ENABLED])
                 try:
                     await self._verify_and_save_acct()
-                except vol.EmailInvalid:
-                    errors[CONF_USERNAME] = "invalid_email"
                 except LoginError:
                     errors["base"] = "invalid_auth"
                 except CommError:
@@ -329,9 +327,7 @@ class Life360Flow(ConfigEntryBaseFlow, ABC):
 
         data_schema = vol.Schema(
             {
-                vol.Required(CONF_USERNAME): TextSelector(
-                    TextSelectorConfig(type=TextSelectorType.EMAIL)
-                ),
+                vol.Required(CONF_USERNAME): TextSelector(),
                 vol.Required(CONF_AUTHORIZATION): TextSelector(),
                 vol.Required(CONF_TOKEN_TYPE): TextSelector(),
                 vol.Required(CONF_ENABLED): BooleanSelector(),
@@ -404,8 +400,11 @@ class Life360Flow(ConfigEntryBaseFlow, ABC):
 
     async def _verify_and_save_acct(self) -> None:
         """Verify and save account to options."""
-        # Validate email address.
-        self._username = cast(str, vol.Email()(self._username))
+        if self._password is None:
+            assert self._username
+        else:
+            # Validate email address.
+            self._username = cast(str, vol.Email()(self._username))
 
         # Check that credentials work by getting new authorization & testing it.
         if self._enabled:
