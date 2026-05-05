@@ -81,7 +81,7 @@ jobs:
         # 0.13.316 -> HA 2026.2.3
         # --- 3.14.2
         # 0.13.320 -> HA 2026.3.4
-        # 0.13.322 -> HA 2026.4.1
+        # 0.13.325 -> HA 2026.4.4
         include:
           - hass-test-cc-version: "0.13.297"
             python-version: "3.13"
@@ -91,7 +91,7 @@ jobs:
             python-version: "3.13.11"
           - hass-test-cc-version: "0.13.316"
             python-version: "3.14.2"
-          - hass-test-cc-version: "0.13.322"
+          - hass-test-cc-version: "0.13.325"
             python-version: "3.14.2"
     steps:
       - name: 📥 Checkout the repository
