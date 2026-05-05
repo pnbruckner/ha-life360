@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from functools import partial
 import logging
 from typing import cast
 
@@ -16,7 +15,6 @@ except ImportError as err:
 
 import voluptuous as vol
 
-from homeassistant import config_entries
 from homeassistant.const import CONF_ENTITY_ID, ENTITY_MATCH_ALL, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
@@ -87,7 +85,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: L360ConfigEntry) -> bool
     store = Life360Store(hass)
     await store.load()
 
-    coordinator = CirclesMembersDataUpdateCoordinator(hass, store)
+    coordinator = CirclesMembersDataUpdateCoordinator(hass, entry, store)
     await coordinator.async_config_entry_first_refresh()
     mem_coordinator: dict[MemberID, MemberDataUpdateCoordinator] = {}
     entry.runtime_data = L360Coordinators(coordinator, mem_coordinator)
@@ -100,10 +98,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: L360ConfigEntry) -> bool
             for mid in set(mem_coordinator) - mids
         ]
         for mid in mids - set(mem_coordinator):
-            entry_was = config_entries.current_entry.get()
-            config_entries.current_entry.set(entry)
-            mem_crd = MemberDataUpdateCoordinator(hass, coordinator, mid)
-            config_entries.current_entry.set(entry_was)
+            mem_crd = MemberDataUpdateCoordinator(hass, entry, mid)
             mem_coordinator[mid] = mem_crd
             coros.append(mem_crd.async_refresh())
         if coros:
@@ -113,17 +108,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: L360ConfigEntry) -> bool
     @callback
     def process_data() -> None:
         """Process Members."""
-        create_process_task = partial(
-            entry.async_create_background_task,
-            hass,
-            async_process_data(),
-            "Process Members",
+        entry.async_create_background_task(
+            hass, async_process_data(), "Process Members"
         )
-        # eager_start parameter was added in 2024.3.
-        try:
-            create_process_task(eager_start=True)
-        except TypeError:
-            create_process_task()
 
     # Set up components for our platforms.
     await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)

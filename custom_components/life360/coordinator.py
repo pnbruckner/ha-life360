@@ -15,9 +15,10 @@ from typing import Any, TypeVar, TypeVarTuple, cast
 
 from aiohttp import ClientSession
 from life360 import Life360Error, LoginError, NotFound, NotModified, RateLimited
+from propcache.api import cached_property
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -83,13 +84,15 @@ class RequestError(Enum):
 class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersData]):
     """Circles & Members data update coordinator."""
 
-    config_entry: ConfigEntry
+    config_entry: L360ConfigEntry
     _bg_update_task: asyncio.Task | None = None
     _fg_update_task: asyncio.Task | None = None
 
-    def __init__(self, hass: HomeAssistant, store: Life360Store) -> None:
+    def __init__(
+        self, hass: HomeAssistant, entry: L360ConfigEntry, store: Life360Store
+    ) -> None:
         """Initialize data update coordinator."""
-        super().__init__(hass, _LOGGER, name="Circles & Members")
+        super().__init__(hass, _LOGGER, config_entry=entry, name="Circles & Members")
         self._store = store
         self.data = self._data_from_store()
         self._options = ConfigOptions.from_dict(self.config_entry.options)
@@ -120,11 +123,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
             return True
         return self._acct_data[aid].online
 
-    # Once supporting only HA 2024.5 or newer, change to @cached_property and clear
-    # cache (i.e., if hasattr(self, "mem_circles"): delattr(self, "mem_circles"))
-    # in _async_refresh_finished override, after call to async_set_updated_data and in
-    # _config_entry_updated after updating self.data.circles.
-    @property
+    @cached_property
     def mem_circles(self) -> dict[MemberID, set[CircleID]]:
         """Return Circles Members are in."""
         return {
@@ -135,6 +134,11 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
             }
             for mid in self.data.mem_details
         }
+
+    def _clear_mem_circles(self) -> None:
+        """Delete cached mem_circles property."""
+        with suppress(AttributeError):
+            del self.mem_circles
 
     async def update_member_location(self, mid: MemberID) -> None:
         """Request Member location update."""
@@ -206,11 +210,13 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                     """Update Circles & Members in background."""
                     try:
                         data, _ = await self._update_data(retry=True)
-                        self.async_set_updated_data(data)
-                        _LOGGER.warning(done_msg, "complete")
                     except asyncio.CancelledError:
                         _LOGGER.warning(done_msg, "cancelled")
                         raise
+                    else:
+                        self._clear_mem_circles()
+                        self.async_set_updated_data(data)
+                        _LOGGER.warning(done_msg, "complete")
                     finally:
                         self._bg_update_task = None
 
@@ -228,6 +234,11 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
             raise
         finally:
             self._fg_update_task = None
+
+    @callback
+    def _async_refresh_finished(self) -> None:
+        """Handle when a refresh has finished."""
+        self._clear_mem_circles()
 
     async def _update_data(self, retry: bool) -> tuple[CirclesMembersData, bool]:
         """Update Life360 Circles & Members seen from all enabled accounts."""
@@ -634,10 +645,15 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
             circle_data.aids -= del_acct_ids
             if not circle_data.aids:
                 no_aids.append(cid)
-        for cid in no_aids:
-            del self.data.circles[cid]
-        for mid in [mid for mid in self.data.mem_details if not self.mem_circles[mid]]:
-            del self.data.mem_details[mid]
+        if no_aids:
+            for cid in no_aids:
+                del self.data.circles[cid]
+            self._clear_mem_circles()
+        no_cirs = [mid for mid in self.data.mem_details if not self.mem_circles[mid]]
+        if no_cirs:
+            for mid in no_cirs:
+                del self.data.mem_details[mid]
+            self._clear_mem_circles()
 
         await self.async_refresh()
 
@@ -695,22 +711,25 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
 class MemberDataUpdateCoordinator(DataUpdateCoordinator[MemberData]):
     """Member data update coordinator."""
 
-    config_entry: ConfigEntry
+    config_entry: L360ConfigEntry
 
     def __init__(
         self,
         hass: HomeAssistant,
-        coordinator: CirclesMembersDataUpdateCoordinator,
+        entry: L360ConfigEntry,
         mid: MemberID,
     ) -> None:
         """Initialize data update coordinator."""
+        coordinator = entry.runtime_data.coordinator
         mem_details = coordinator.data.mem_details[mid]
         super().__init__(
-            hass, _LOGGER, name=mem_details.name, update_interval=UPDATE_INTERVAL
+            hass,
+            _LOGGER,
+            config_entry=entry,
+            name=mem_details.name,
+            update_interval=UPDATE_INTERVAL,
+            always_update=False,
         )
-        # always_update added in 2023.9.
-        if hasattr(self, "always_update"):
-            self.always_update = False
         self.data = MemberData(mem_details)
         self._coordinator = coordinator
         self._mid = mid

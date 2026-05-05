@@ -6,11 +6,11 @@ import asyncio
 from collections.abc import Mapping
 from contextlib import suppress
 from copy import deepcopy
-from functools import cached_property  # pylint: disable=hass-deprecated-import
 import logging
 from typing import Any, cast
 
-from homeassistant.components.device_tracker import SourceType
+from propcache.api import cached_property
+
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
 from homeassistant.const import (
     ATTR_BATTERY_CHARGING,
@@ -190,12 +190,7 @@ class Life360DeviceTracker(
         return self._data.loc.battery_level
 
     @property
-    def source_type(self) -> SourceType:
-        """Return the source type, eg gps or router, of the device."""
-        return SourceType.GPS
-
-    @property
-    def location_accuracy(self) -> int:
+    def location_accuracy(self) -> float:
         """Return the location accuracy of the device.
 
         Value in meters.
