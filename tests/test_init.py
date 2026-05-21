@@ -99,7 +99,7 @@ def cfg_options(
     accts: int,
     driving: bool = False,
     driving_speed: float | None = None,
-    max_gps_accuracy: int | None = None,
+    max_gps_accuracy: float | None = None,
     verbosity: int = 0,
 ) -> dict[str, Any]:
     """Create config options."""

@@ -111,7 +111,7 @@ class ConfigOptions:
     # CONF_SHOW_DRIVING is actually "driving" for legacy reasons.
     driving: bool = False
     driving_speed: float | None = None
-    max_gps_accuracy: int | None = None
+    max_gps_accuracy: float | None = None
     verbosity: int = 0
 
     def as_dict(self) -> dict[str, Any]:
