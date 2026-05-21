@@ -374,7 +374,7 @@ class Life360DeviceTracker(
                 self._ignored_update_reasons.append(ATTR_GPS_ACCURACY)
                 _LOGGER.warning(
                     "%s: Ignoring location update because "
-                    "expected GPS accuracy (%0.1f) is not met: %i",
+                    "expected GPS accuracy (%.1f) is not met: %.1f",
                     self,
                     max_gps_acc,
                     self.location_accuracy,

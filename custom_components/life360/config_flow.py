@@ -111,8 +111,9 @@ class Life360Flow(ConfigEntryBaseFlow, ABC):
     ) -> ConfigFlowResult:
         """Get basic options."""
         if user_input is not None:
-            mga = cast(float | None, user_input.get(CONF_MAX_GPS_ACCURACY))
-            self._opts.max_gps_accuracy = None if mga is None else int(mga)
+            self._opts.max_gps_accuracy = cast(
+                float | None, user_input.get(CONF_MAX_GPS_ACCURACY)
+            )
             self._opts.driving_speed = cast(
                 float | None, user_input.get(CONF_DRIVING_SPEED)
             )
