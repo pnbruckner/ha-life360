@@ -33,6 +33,15 @@ from homeassistant.components.device_tracker import (
     DOMAIN as DT_DOMAIN,
     SourceType,
 )
+
+# HA 2026.5 added in_zones attribute
+try:
+    from homeassistant.components.device_tracker import ATTR_IN_ZONES
+
+    TEST_FOR_IN_ZONES = True
+except ImportError:
+    TEST_FOR_IN_ZONES = False
+
 from homeassistant.const import (
     ATTR_ATTRIBUTION,
     ATTR_ENTITY_PICTURE,
@@ -325,6 +334,8 @@ async def test_circles_members_no_loc(
         }
         if mem_info.entity_picture:
             expected_attrs[ATTR_ENTITY_PICTURE] = mem_info.entity_picture
+        if TEST_FOR_IN_ZONES:
+            expected_attrs[ATTR_IN_ZONES] = []
         assert state.attributes == expected_attrs
         # Check location is missing.
         assert not mem_info.loc
