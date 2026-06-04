@@ -11,7 +11,7 @@ from typing import Any, cast
 
 from propcache.api import cached_property
 
-from homeassistant.components.device_tracker.config_entry import TrackerEntity
+from homeassistant.components.device_tracker import TrackerEntity
 from homeassistant.const import (
     ATTR_BATTERY_CHARGING,
     ATTR_GPS_ACCURACY,
