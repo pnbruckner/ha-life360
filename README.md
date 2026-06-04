@@ -157,16 +157,11 @@ Or it may be used if for whatever other reason the username & password method do
 In theory, there is a way to "login" to the Life360 server using a phone number and a code sent via SMS.
 However, I have not been able to get that to work.
 
-Go to https://life360.com/login.
-Open the browser's Developer Tools sidebar & go to the Network tab.
-Make sure recording is enabled.
-Log into Life360.
-When the process has been completed look for the "token" packet.
-(If there is one labeled "preflight", uses the OPTIONS method, or has no preview/response data,
-ignore it and look for another "token" packet which uses the POST method and has data.)
-Under the Preview or Response tab, look for `access_token` & `token_type`.
-Copy those values into the corresponding boxes (access token & token type) on the HA account page.
-(Note that the `token_type` is almost certainly "Bearer".)
+Go to https://life360.com/login and complete the sign-in process.
+Open the browser's Developer Tools sidebar & go to the Application tab.
+On the left side, under Storage -> Cookies, click on the life360 entry.
+Copy the value from LIFE360_AUTH_TOKEN and enter it into the corresponding box on the HA account page.
+(Note that the "Token type" is almost certainly "Bearer", so leave that default value as-is.)
 You can put whatever you want in the "Account identifier" box.
 
 ## Versions
