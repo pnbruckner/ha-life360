@@ -115,9 +115,12 @@ class Life360BinarySensor(BinarySensorEntity):
         self, _: HomeAssistant, entry: L360ConfigEntry
     ) -> None:
         """Run when the config entry has been updated."""
-        enabled = ConfigOptions.from_dict(entry.options).accounts[self.aid].enabled
-        if enabled == self._enabled:
+        # Check to make sure account hasn't just been deleted. If so, don't update state
+        # because we're about to be removed.
+        if not (acct := ConfigOptions.from_dict(entry.options).accounts.get(self.aid)):
+            return
+        if acct.enabled == self._enabled:
             return
 
-        self._enabled = enabled
+        self._enabled = not self._enabled
         self.async_write_ha_state()
