@@ -130,8 +130,7 @@ the state of the entity will be set to "Driving", assuming it is not within a Ho
 
 #### DEBUG Message Verbosity
 
-If the user's profile has "advanced mode" enabled, then this configuration option will appear.
-It can be used to adjust how much debug information should be written to the system log,
+Controls how much debug information should be written to the system log,
 assuming debug has been enabled for the Life360 integration.
 
 ### Life360 Accounts
