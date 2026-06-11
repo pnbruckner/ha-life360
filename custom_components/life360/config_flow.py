@@ -118,8 +118,7 @@ class Life360Flow(ConfigEntryBaseFlow, ABC):
                 float | None, user_input.get(CONF_DRIVING_SPEED)
             )
             self._opts.driving = cast(bool, user_input[CONF_SHOW_DRIVING])
-            if self.show_advanced_options:
-                self._opts.verbosity = int(user_input[CONF_VERBOSITY])
+            self._opts.verbosity = int(user_input[CONF_VERBOSITY])
 
             return await self.async_step_acct_menu()
 
@@ -142,6 +141,12 @@ class Life360Flow(ConfigEntryBaseFlow, ABC):
                     )
                 ),
                 vol.Required(CONF_SHOW_DRIVING): BooleanSelector(),
+                vol.Required(CONF_VERBOSITY): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[str(i) for i in range(5)],
+                        translation_key="verbosity",
+                    )
+                ),
             }
         )
         if self._opts.max_gps_accuracy is not None:
@@ -153,22 +158,12 @@ class Life360Flow(ConfigEntryBaseFlow, ABC):
                 data_schema, {CONF_DRIVING_SPEED: self._opts.driving_speed}
             )
         data_schema = self.add_suggested_values_to_schema(
-            data_schema, {CONF_SHOW_DRIVING: self._opts.driving}
+            data_schema,
+            {
+                CONF_SHOW_DRIVING: self._opts.driving,
+                CONF_VERBOSITY: str(self._opts.verbosity),
+            },
         )
-        if self.show_advanced_options:
-            data_schema = data_schema.extend(
-                {
-                    vol.Required(CONF_VERBOSITY): SelectSelector(
-                        SelectSelectorConfig(
-                            options=[str(i) for i in range(5)],
-                            translation_key="verbosity",
-                        )
-                    )
-                }
-            )
-            data_schema = self.add_suggested_values_to_schema(
-                data_schema, {CONF_VERBOSITY: str(self._opts.verbosity)}
-            )
         return self.async_show_form(
             step_id="init",
             data_schema=data_schema,
