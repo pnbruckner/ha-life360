@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import IntEnum
 import logging
+import ssl
 from typing import Any, NewType, Self, cast
 
 from aiohttp import ClientSession
@@ -30,7 +31,7 @@ from homeassistant.helpers.aiohttp_client import (
 )
 from homeassistant.helpers.restore_state import ExtraStoredData
 from homeassistant.helpers.storage import Store
-from homeassistant.util import dt as dt_util, ssl as ssl_util
+from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import DistanceConverter
 
 from .const import (
@@ -51,6 +52,15 @@ _LOGGER = logging.getLogger(__name__)
 # So testing can patch in one place.
 LIFE360 = Life360
 
+# Cloudflare rejects a ClientHello whose only ALPN entry is "http/1.1", which is
+# what aiohttp's default context advertises. ssl_util.client_context() avoids that,
+# but returns a process-wide cached object that httpx/httpcore mutates in place via
+# set_alpn_protocols() -- so whether our requests carry ALPN depends on what other
+# integrations happen to have run first, and the resulting 403s look intermittent.
+# Own the context rather than sharing it. Built at import, which runs in Home
+# Assistant's import executor, because loading CA certs is blocking I/O.
+_SSL_CONTEXT = ssl.create_default_context()
+
 
 AccountID = NewType("AccountID", str)
 CircleID = NewType("CircleID", str)
@@ -64,13 +74,11 @@ def get_session(hass: HomeAssistant) -> ClientSession:
         return session
 
     # Starting in 2026.2, the SSLContext object seems to upset the Life360
-    # server, or more likely, Cloudflare. Create a new connector with the
-    # older style SSLContext object, and use that instead with the
-    # ClientSession.
-    _LOGGER.debug("Creating new TCPConnector with older SSLContext")
-    ssl_context = ssl_util.client_context()
+    # server, or more likely, Cloudflare. Create a new connector with our own
+    # SSLContext object, and use that instead with the ClientSession.
+    _LOGGER.debug("Creating new TCPConnector with private SSLContext")
     connector = HomeAssistantTCPConnector(
-        ssl=ssl_context,
+        ssl=_SSL_CONTEXT,
         limit=MAXIMUM_CONNECTIONS,
         limit_per_host=MAXIMUM_CONNECTIONS_PER_HOST,
         resolver=_async_get_or_create_resolver(hass),
