@@ -61,7 +61,6 @@ class AccountData:
     session: ClientSession
     api: helpers.Life360
     failed: asyncio.Event
-    failed_task: asyncio.Task
     online: bool = True
 
 
@@ -444,8 +443,14 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
         delay_reason = ""
         warned = False
 
-        failed_task = self._acct_data[aid].failed_task
+        failed = self._acct_data[aid].failed
         request_task: asyncio.Task[_R] | None = None
+
+        async def cancel_request_if_failed(request: asyncio.Task[_R]) -> None:
+            """Cancel the request if another request disables the account."""
+            await failed.wait()
+            request.cancel()
+
         try:
             while True:
                 if delay is not None:
@@ -468,20 +473,21 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                         delay,
                     )
                     await asyncio.sleep(delay)
-                request_task = self.config_entry.async_create_background_task(
+                current_request = self.config_entry.async_create_background_task(
                     self.hass,
                     target(*args),
                     f"Make request to {aid}",
                 )
-                done, _ = await asyncio.wait(
-                    [failed_task, request_task], return_when=asyncio.FIRST_COMPLETED
+                request_task = current_request
+
+                # Do not race against a shared task with asyncio.wait here. The pending
+                # task's awaited-by graph would retain every completed _request task.
+                # See https://github.com/python/cpython/issues/152569.
+                failed_watcher = self.config_entry.async_create_background_task(
+                    self.hass,
+                    cancel_request_if_failed(current_request),
+                    f"Monitor failed request to {aid}",
                 )
-                if failed_task in done:
-                    (rt := request_task).cancel()
-                    request_task = None
-                    with suppress(asyncio.CancelledError, Life360Error):
-                        await rt
-                    return RequestError.NO_DATA
 
                 try:
                     # if aid == "federicktest95@gmail.com":
@@ -493,6 +499,15 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                     #             await rt
                     #         raise LoginError("TEST TEST TEST")
                     result = await request_task
+
+                except asyncio.CancelledError:
+                    current_task = asyncio.current_task()
+                    if current_task and current_task.cancelling():
+                        raise
+                    if failed.is_set():
+                        request_task = None
+                        return RequestError.NO_DATA
+                    raise
 
                 except NotFound:
                     self._set_acct_exc(aid)
@@ -540,8 +555,18 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
 
                 else:
                     request_task = None
+                    current_task = asyncio.current_task()
+                    if current_task and current_task.cancelling():
+                        raise asyncio.CancelledError
+                    if failed.is_set():
+                        return RequestError.NO_DATA
                     self._set_acct_exc(aid)
                     return result
+
+                finally:
+                    failed_watcher.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await failed_watcher
 
         except asyncio.CancelledError:
             if request_task:
@@ -693,19 +718,13 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                 verbosity=self._options.verbosity,
             )
             failed = asyncio.Event()
-            failed_task = self.config_entry.async_create_background_task(
-                self.hass,
-                failed.wait(),
-                f"Monitor failed requests to {aid}",
-            )
-            self._acct_data[aid] = AccountData(session, api, failed, failed_task)
+            self._acct_data[aid] = AccountData(session, api, failed)
 
     def _delete_acct_data(self, aids: Iterable[AccountID]) -> None:
         """Delete data previously created for each specified Life360 account."""
         for aid in aids:
             acct = self._acct_data.pop(aid)
             acct.session.detach()
-            acct.failed_task.cancel()
 
 
 class MemberDataUpdateCoordinator(DataUpdateCoordinator[MemberData]):
