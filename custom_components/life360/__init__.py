@@ -70,7 +70,7 @@ async def async_migrate_entry(_: HomeAssistant, entry: L360ConfigEntry) -> bool:
     # Currently, no migration is supported.
     version = str(entry.version)
     minor_version = cast(int | None, getattr(entry, "minor_version", None))
-    if minor_version:
+    if minor_version is not None:
         version = f"{version}.{minor_version}"
     _LOGGER.error(
         "Unsupported configuration entry found: %s, version: %s; please remove it",

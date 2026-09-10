@@ -42,6 +42,14 @@ try:
 except ImportError:
     TEST_FOR_IN_ZONES = False
 
+# HA 2026.7 added tracker_type attribute
+try:
+    from homeassistant.components.device_tracker import ATTR_TRACKING_TYPE, TrackingType
+
+    TEST_FOR_TRACKING_TYPE = True
+except ImportError:
+    TEST_FOR_TRACKING_TYPE = False
+
 from homeassistant.const import (
     ATTR_ATTRIBUTION,
     ATTR_ENTITY_PICTURE,
@@ -336,6 +344,8 @@ async def test_circles_members_no_loc(
             expected_attrs[ATTR_ENTITY_PICTURE] = mem_info.entity_picture
         if TEST_FOR_IN_ZONES:
             expected_attrs[ATTR_IN_ZONES] = []
+        if TEST_FOR_TRACKING_TYPE:
+            expected_attrs[ATTR_TRACKING_TYPE] = TrackingType.POSITION
         assert state.attributes == expected_attrs
         # Check location is missing.
         assert not mem_info.loc

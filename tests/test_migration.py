@@ -55,7 +55,7 @@ async def test_uknown_config_version(
     unload_entry_mock: AsyncMock,
     bad_vers: int,
 ) -> None:
-    """Test with unknown config entry version (i.e., downgrading)."""
+    """Test with unknown config entry version (e.g., downgrading)."""
     entry = MockConfigEntry(domain=DOMAIN, version=bad_vers)
     entry.add_to_hass(hass)
 
@@ -64,7 +64,9 @@ async def test_uknown_config_version(
         await hass.async_block_till_done()
 
     pat1 = re.compile(
-        r"Unsupported configuration entry found: [^,]+, version: "
-        rf"{bad_vers}(.1)?; please remove it"
+        r"(Unsupported configuration entry found: [^,]+, version: "
+        rf"{bad_vers}(.1)?; please remove it)"
+        rf"|(Config entry {entry.title} for {entry.domain} has version {entry.version})"
+        rf" which is higher than the current version {Life360ConfigFlow.VERSION}"
     )
     assert_log_messages(caplog, ((1, "ERROR", pat1),))
