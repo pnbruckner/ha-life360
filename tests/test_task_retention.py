@@ -6,14 +6,14 @@ import asyncio
 import gc
 import weakref
 
-import pytest
-from homeassistant.core import HomeAssistant
-from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-
 from custom_components.life360.config_flow import Life360ConfigFlow
 from custom_components.life360.const import DOMAIN
 from custom_components.life360.coordinator import RequestError
+import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from homeassistant.core import HomeAssistant
+from homeassistant.setup import async_setup_component
 
 from .test_init import cfg_options
 
@@ -147,9 +147,10 @@ async def test_account_failure_wins_cancellation_resistant_request(
         started.set()
         try:
             await asyncio.Event().wait()
-            return "unexpected request completion"
         except asyncio.CancelledError:
             return "request ignored cancellation"
+        else:
+            return "unexpected request completion"
 
     task = asyncio.create_task(
         coordinator._request("aid1", request, msg="failure race")  # noqa: SLF001
@@ -180,9 +181,10 @@ async def test_external_cancellation_wins_resistant_request(
         started.set()
         try:
             await asyncio.Event().wait()
-            return "unexpected request completion"
         except asyncio.CancelledError:
             return "request ignored cancellation"
+        else:
+            return "unexpected request completion"
 
     task = asyncio.create_task(
         coordinator._request(  # noqa: SLF001

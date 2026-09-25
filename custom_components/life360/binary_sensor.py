@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from functools import partial
 import logging
-from typing import cast
+from typing import cast, override
 
 from propcache.api import cached_property
 
@@ -91,6 +91,7 @@ class Life360BinarySensor(BinarySensorEntity):
         """Return account ID."""
         return cast(AccountID, self.unique_id)
 
+    @override
     @property
     def is_on(self) -> bool:
         """Return if account is online."""
@@ -98,6 +99,7 @@ class Life360BinarySensor(BinarySensorEntity):
             return False
         return self._online()
 
+    @override
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""
 
