@@ -11,7 +11,7 @@ from enum import Enum, auto
 from functools import partial
 import logging
 from math import ceil
-from typing import Any, TypeVar, TypeVarTuple, cast
+from typing import Any, TypeVar, TypeVarTuple, cast, override
 
 from aiohttp import ClientSession
 from life360 import Life360Error, LoginError, NotFound, NotModified, RateLimited
@@ -105,6 +105,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
             self.config_entry.add_update_listener(self._config_entry_updated)
         )
 
+    @override
     async def async_shutdown(self) -> None:
         """Cancel any scheduled call, and ignore new runs."""
         await super().async_shutdown()
@@ -192,6 +193,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
             return CirclesMembersData()
         return CirclesMembersData(self._store.circles, self._store.mem_details)
 
+    @override
     async def _async_update_data(self) -> CirclesMembersData:
         """Fetch the latest data from the source."""
         done_msg = "Circles & Members list retrieval %s"
@@ -234,6 +236,7 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
         finally:
             self._fg_update_task = None
 
+    @override
     @callback
     def _async_refresh_finished(self) -> None:
         """Handle when a refresh has finished."""
@@ -540,16 +543,15 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
                     return RequestError.NO_DATA
 
                 except Life360Error as exc:
-                    rate_limited = isinstance(exc, RateLimited)
-                    if lrle_resp is LoginRateLimitErrResp.RETRY and rate_limited:
-                        self._set_acct_exc(aid)
-                        delay = ceil(cast(RateLimited, exc).retry_after or 0) + 10
-                        delay_reason = "rate limited"
-                        continue
-
-                    treat_as_error = not (
-                        rate_limited and lrle_resp is LoginRateLimitErrResp.SILENT
-                    )
+                    if isinstance(exc, RateLimited):
+                        if lrle_resp is not LoginRateLimitErrResp.SILENT:
+                            self._set_acct_exc(aid)
+                            delay = ceil(exc.retry_after or 0) + 10
+                            delay_reason = "rate limited"
+                            continue
+                        treat_as_error = False
+                    else:
+                        treat_as_error = True
                     self._set_acct_exc(aid, not treat_as_error, msg, exc)
                     return RequestError.NO_DATA
 
@@ -758,6 +760,7 @@ class MemberDataUpdateCoordinator(DataUpdateCoordinator[MemberData]):
         """Request Member location update."""
         await self._coordinator.update_member_location(self._mid)
 
+    @override
     async def _async_update_data(self) -> MemberData:
         """Fetch the latest data from the source."""
         raw_member_data = await self._coordinator.get_raw_member_data(self._mid)
@@ -783,7 +786,7 @@ class MemberDataUpdateCoordinator(DataUpdateCoordinator[MemberData]):
         self._member_data = member_data
 
         # Now take "best" data for Member.
-        data = sorted(member_data.values())[-1]
+        data = max(member_data.values())
         if len(self._coordinator.data.circles) > 1:
             # Each Circle has its own Places. Collect all the Places where the
             # Member might be, while keeping the Circle they came from. Then

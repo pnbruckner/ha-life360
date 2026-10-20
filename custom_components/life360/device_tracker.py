@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from contextlib import suppress
 from copy import deepcopy
 import logging
-from typing import Any, cast
+from typing import Any, cast, override
 
 from propcache.api import cached_property
 
@@ -148,6 +148,7 @@ class Life360DeviceTracker(
             )
         )
 
+    @override
     def __repr__(self) -> str:
         """Return identification string."""
         if name := (
@@ -170,6 +171,7 @@ class Life360DeviceTracker(
         """Return if system is configured for Metric."""
         return self.hass.config.units is METRIC_SYSTEM
 
+    @override
     @property
     def force_update(self) -> bool:
         """Return True if state updates should be forced.
@@ -179,6 +181,7 @@ class Life360DeviceTracker(
         """
         return False
 
+    @override
     @property
     def battery_level(self) -> int | None:
         """Return the battery level of the device.
@@ -189,6 +192,7 @@ class Life360DeviceTracker(
             return None
         return self._data.loc.battery_level
 
+    @override
     @property
     def location_accuracy(self) -> float:
         """Return the location accuracy of the device.
@@ -199,6 +203,7 @@ class Life360DeviceTracker(
             return 0
         return self._data.loc.details.gps_accuracy
 
+    @override
     @property
     def latitude(self) -> float | None:
         """Return latitude value of the device."""
@@ -206,6 +211,7 @@ class Life360DeviceTracker(
             return None
         return self._data.loc.details.latitude
 
+    @override
     @property
     def longitude(self) -> float | None:
         """Return longitude value of the device."""
@@ -223,6 +229,7 @@ class Life360DeviceTracker(
                 return True
         return self._data.loc.details.driving
 
+    @override
     @property
     def state(self) -> str | None:
         """Return the state of the device."""
@@ -236,6 +243,7 @@ class Life360DeviceTracker(
             return STATE_DRIVING
         return state
 
+    @override
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Return entity specific state attributes."""
@@ -289,11 +297,13 @@ class Life360DeviceTracker(
 
         return {ATTR_REASON: reason}
 
+    @override
     @property
     def extra_restore_state_data(self) -> MemberData:
         """Return Life360 specific state data to be restored."""
         return self._data
 
+    @override
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""
         await super().async_added_to_hass()
@@ -326,6 +336,7 @@ class Life360DeviceTracker(
             return
         await self.coordinator.update_location()
 
+    @override
     @callback
     def _handle_coordinator_update(self, config_changed: bool = False) -> None:
         """Handle updated data from the coordinator."""

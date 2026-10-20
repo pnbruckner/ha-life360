@@ -8,7 +8,7 @@ from datetime import datetime
 from enum import IntEnum
 import logging
 import ssl
-from typing import Any, NewType, Self, cast
+from typing import Any, NewType, Self, cast, override
 
 from aiohttp import ClientSession
 from life360 import Life360
@@ -307,6 +307,7 @@ class MemberData(ExtraStoredData):
     loc_missing: NoLocReason = NoLocReason.NOT_SET
     err_msg: str | None = None
 
+    @override
     def as_dict(self) -> dict[str, Any]:
         """Return a dict representation of the data."""
         return asdict(self)

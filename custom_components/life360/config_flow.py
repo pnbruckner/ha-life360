@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, cast
+from typing import Any, cast, override
 
 from life360 import CommError, Life360Error, LoginError
 from propcache.api import cached_property
@@ -400,7 +400,7 @@ class Life360Flow(ConfigEntryBaseFlow, ABC):
             assert self._username
         else:
             # Validate email address.
-            self._username = cast(str, vol.Email()(self._username))
+            self._username = vol.Email()(self._username)
 
         # Check that credentials work by getting new authorization & testing it.
         if self._enabled:
@@ -448,11 +448,13 @@ class Life360ConfigFlow(ConfigFlow, Life360Flow, domain=DOMAIN):
 
     VERSION = 2
 
+    @override
     @cached_property
     def _opts(self) -> ConfigOptions:
         """Return mutable options class."""
         return ConfigOptions()
 
+    @override
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> Life360OptionsFlow:
@@ -460,12 +462,14 @@ class Life360ConfigFlow(ConfigFlow, Life360Flow, domain=DOMAIN):
         # Default first step is init.
         return Life360OptionsFlow()
 
+    @override
     async def async_step_user(
         self, _: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle a config flow initiated by the user."""
         return await self.async_step_init()
 
+    @override
     async def async_step_done(
         self, _: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -478,11 +482,13 @@ class Life360ConfigFlow(ConfigFlow, Life360Flow, domain=DOMAIN):
 class Life360OptionsFlow(OptionsFlow, Life360Flow):
     """Life360 integration options flow."""
 
+    @override
     @cached_property
     def _opts(self) -> ConfigOptions:
         """Return mutable options class."""
         return ConfigOptions.from_dict(self.config_entry.options)
 
+    @override
     async def async_step_done(
         self, _: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
