@@ -67,16 +67,16 @@ class Life360BatterySensor(
         self._attr_unique_id = f"{mid}_battery"
         self._update_basic_attrs()
 
-    @override
     @property
+    @override
     def native_value(self) -> int | None:
         """Return the battery percentage, or None if it is unknown."""
         if not (loc := self.coordinator.data.loc):
             return None
         return loc.battery_level
 
-    @override
     @callback
+    @override
     def _handle_coordinator_update(self) -> None:
         """Update member details before writing the new state."""
         self._update_basic_attrs()

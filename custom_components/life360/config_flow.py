@@ -448,15 +448,15 @@ class Life360ConfigFlow(ConfigFlow, Life360Flow, domain=DOMAIN):
 
     VERSION = 2
 
-    @override
     @cached_property
+    @override
     def _opts(self) -> ConfigOptions:
         """Return mutable options class."""
         return ConfigOptions()
 
-    @override
     @staticmethod
     @callback
+    @override
     def async_get_options_flow(config_entry: ConfigEntry) -> Life360OptionsFlow:
         """Get the options flow for this handler."""
         # Default first step is init.
@@ -482,8 +482,8 @@ class Life360ConfigFlow(ConfigFlow, Life360Flow, domain=DOMAIN):
 class Life360OptionsFlow(OptionsFlow, Life360Flow):
     """Life360 integration options flow."""
 
-    @override
     @cached_property
+    @override
     def _opts(self) -> ConfigOptions:
         """Return mutable options class."""
         return ConfigOptions.from_dict(self.config_entry.options)

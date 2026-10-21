@@ -172,8 +172,8 @@ class Life360DeviceTracker(
         """Return if system is configured for Metric."""
         return self.hass.config.units is METRIC_SYSTEM
 
-    @override
     @property
+    @override
     def force_update(self) -> bool:
         """Return True if state updates should be forced.
 
@@ -182,8 +182,8 @@ class Life360DeviceTracker(
         """
         return False
 
-    @override
     @property
+    @override
     def location_accuracy(self) -> float:
         """Return the location accuracy of the device.
 
@@ -193,16 +193,16 @@ class Life360DeviceTracker(
             return 0
         return self._data.loc.details.gps_accuracy
 
-    @override
     @property
+    @override
     def latitude(self) -> float | None:
         """Return latitude value of the device."""
         if not self._data.loc:
             return None
         return self._data.loc.details.latitude
 
-    @override
     @property
+    @override
     def longitude(self) -> float | None:
         """Return longitude value of the device."""
         if not self._data.loc:
@@ -219,8 +219,8 @@ class Life360DeviceTracker(
                 return True
         return self._data.loc.details.driving
 
-    @override
     @property
+    @override
     def state(self) -> str | None:
         """Return the state of the device."""
         # If location details are missing, set state to "unknown"; "reason" attribute
@@ -233,8 +233,8 @@ class Life360DeviceTracker(
             return STATE_DRIVING
         return state
 
-    @override
     @property
+    @override
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Return entity specific state attributes."""
         if self._data.loc:
@@ -290,8 +290,8 @@ class Life360DeviceTracker(
 
         return {ATTR_REASON: reason}
 
-    @override
     @property
+    @override
     def extra_restore_state_data(self) -> MemberData:
         """Return Life360 specific state data to be restored."""
         return self._data
@@ -329,8 +329,8 @@ class Life360DeviceTracker(
             return
         await self.coordinator.update_location()
 
-    @override
     @callback
+    @override
     def _handle_coordinator_update(self, config_changed: bool = False) -> None:
         """Handle updated data from the coordinator."""
         if self.coordinator.data == self._data and not config_changed:
