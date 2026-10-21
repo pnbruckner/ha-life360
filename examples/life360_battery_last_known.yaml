@@ -1,0 +1,23 @@
+# Optional helper for keeping the last valid battery reading during Life360 gaps.
+# Replace the source entity below with your member's Life360 battery sensor.
+# The value can be stale; last_valid_update records when this helper accepted it.
+template:
+  - triggers:
+      - trigger: state
+        entity_id: sensor.life360_first_last_battery
+      - trigger: homeassistant
+        event: start
+    conditions:
+      - condition: template
+        value_template: >-
+          {% set value = states('sensor.life360_first_last_battery') %}
+          {{ is_number(value) and 0 <= (value | float) <= 100 }}
+    sensor:
+      - name: Life360 battery last known
+        unique_id: life360_battery_last_known
+        device_class: battery
+        unit_of_measurement: "%"
+        state_class: measurement
+        state: "{{ states('sensor.life360_first_last_battery') | int }}"
+        attributes:
+          last_valid_update: "{{ now().isoformat() }}"

@@ -278,8 +278,14 @@ class LocationData:
     @classmethod
     def from_server(cls, raw_loc: Mapping[str, Any]) -> Self:
         """Initialize from Member's location data from server."""
-        if (battery_level := int(float(raw_loc["battery"]))) < 0:
-            battery_level = None
+        battery_level: int | None = None
+        try:
+            battery = float(raw_loc.get("battery"))
+        except (TypeError, ValueError, OverflowError):
+            pass
+        else:
+            if 0 <= battery <= 100:
+                battery_level = int(battery)
         return cls(
             LocationDetails.from_server(raw_loc),
             bool(int(raw_loc["charge"])),

@@ -163,6 +163,15 @@ Copy the value from LIFE360_AUTH_TOKEN and enter it into the corresponding box o
 (Note that the "Token type" is almost certainly "Bearer", so leave that default value as-is.)
 You can put whatever you want in the "Account identifier" box.
 
+## Battery Sensors
+
+Each Member has a battery sensor, such as `sensor.life360_first_last_battery`, with a value from 0 to 100%.
+The sensor is `unknown` when Life360 does not provide a valid battery level or the Member's location data is missing.
+It uses the same updates as the device tracker, so it does not make extra requests to Life360.
+
+The device tracker's `battery_level` attribute is still available for existing templates when the battery level is known.
+New dashboards and automations can use the battery sensor directly.
+
 ## Versions
 
 This custom integration supports HomeAssistant versions 2025.11.3 or newer.
