@@ -236,8 +236,8 @@ class CirclesMembersDataUpdateCoordinator(DataUpdateCoordinator[CirclesMembersDa
         finally:
             self._fg_update_task = None
 
-    @override
     @callback
+    @override
     def _async_refresh_finished(self) -> None:
         """Handle when a refresh has finished."""
         self._clear_mem_circles()

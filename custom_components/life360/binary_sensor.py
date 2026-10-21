@@ -91,8 +91,8 @@ class Life360BinarySensor(BinarySensorEntity):
         """Return account ID."""
         return cast(AccountID, self.unique_id)
 
-    @override
     @property
+    @override
     def is_on(self) -> bool:
         """Return if account is online."""
         if not self._enabled:
