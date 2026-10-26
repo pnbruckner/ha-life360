@@ -60,7 +60,7 @@
             },
             "acct_authorization": {
                 "title": "{action} account",
-                "description": "Sign in at {life360_login_url}. In your browser's Developer Tools, open Application -> Storage -> Cookies and select the Life360 website. Copy the LIFE360_AUTH_TOKEN value into the field below. Leave Token type as Bearer. Home Assistant will check the token before saving an enabled account.",
+                "description": "Sign in at {life360_login_url}. In your browser's Developer Tools, open Application -> Storage -> Cookies and select the Life360 website. Copy the LIFE360_AUTH_TOKEN value into the field below. Leave Token type as Bearer.",
                 "data": {
                     "username": "Account identifier (e.g., phone number, email address)",
                     "authorization": "LIFE360_AUTH_TOKEN",
@@ -151,7 +151,7 @@
             },
             "acct_authorization": {
                 "title": "{action} account",
-                "description": "Sign in at {life360_login_url}. In your browser's Developer Tools, open Application -> Storage -> Cookies and select the Life360 website. Copy the LIFE360_AUTH_TOKEN value into the field below. Leave Token type as Bearer. Home Assistant will check the token before saving an enabled account.",
+                "description": "Sign in at {life360_login_url}. In your browser's Developer Tools, open Application -> Storage -> Cookies and select the Life360 website. Copy the LIFE360_AUTH_TOKEN value into the field below. Leave Token type as Bearer.",
                 "data": {
                     "username": "Account identifier (e.g., phone number, email address)",
                     "authorization": "LIFE360_AUTH_TOKEN",
