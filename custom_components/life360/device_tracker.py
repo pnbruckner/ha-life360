@@ -12,6 +12,7 @@ from propcache.api import cached_property
 from homeassistant.components.device_tracker import TrackerEntity
 from homeassistant.const import (
     ATTR_BATTERY_CHARGING,
+    ATTR_BATTERY_LEVEL,
     ATTR_GPS_ACCURACY,
     ENTITY_MATCH_ALL,
     STATE_NOT_HOME,
@@ -181,17 +182,6 @@ class Life360DeviceTracker(
 
     @property
     @override
-    def battery_level(self) -> int | None:
-        """Return the battery level of the device.
-
-        Percentage from 0-100.
-        """
-        if not self._data.loc:
-            return None
-        return self._data.loc.battery_level
-
-    @property
-    @override
     def location_accuracy(self) -> float:
         """Return the location accuracy of the device.
 
@@ -273,6 +263,7 @@ class Life360DeviceTracker(
                     self._data.loc.details.at_loc_since
                 ),
                 ATTR_BATTERY_CHARGING: self._data.loc.battery_charging,
+                ATTR_BATTERY_LEVEL: self._data.loc.battery_level,
                 ATTR_DRIVING: self.driving,
                 ATTR_LAST_SEEN: dt_util.as_local(self._data.loc.details.last_seen),
                 ATTR_PLACE: self._data.loc.details.place,

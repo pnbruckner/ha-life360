@@ -88,6 +88,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: L360ConfigEntry) -> bool
     mem_coordinator: dict[MemberID, MemberDataUpdateCoordinator] = {}
     entry.runtime_data = L360Coordinators(coordinator, mem_coordinator)
 
+    # TODO: Should this hold a lock to make sure one update finishes before another can
+    #       start?
+    #       Also, should the coordinator data be "snapshotted" and sent w/ the dispatch
+    #       to make sure data used by entities won't change in case the next update
+    #       starts before the entities finish updating?
     async def async_process_data() -> None:
         """Process Members."""
         mids = set(coordinator.data.mem_details)
