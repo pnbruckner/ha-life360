@@ -17,22 +17,22 @@ jobs:
       - name: 🏃 Hassfest validation
         uses: "home-assistant/actions/hassfest@master"
 
-#  validate-hacs:
-#    runs-on: ubuntu-latest
-#    name: With HACS Action
-#    steps:
-#      - name: 🏃 HACS validation
-#        uses: hacs/action@main
-#        with:
-#          category: integration
-#          ignore: brands
+  validate-hacs:
+    runs-on: ubuntu-latest
+    name: With HACS Action
+    steps:
+      - name: 🏃 HACS validation
+        uses: hacs/action@main
+        with:
+          category: integration
+          ignore: brands
 
   validate-pytest:
     runs-on: ubuntu-latest
     name: With pytest
     needs:
       - validate-hassfest
-#      - validate-hacs
+      - validate-hacs
     strategy:
       matrix:
         # HA Python versions
