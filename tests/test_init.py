@@ -1,5 +1,4 @@
 """Test Life360 __init__.py module."""
-from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable, Mapping, MutableMapping
@@ -29,27 +28,13 @@ from pytest_homeassistant_custom_component.common import (
 from homeassistant import config_entries
 from homeassistant.components.binary_sensor import DOMAIN as BS_DOMAIN
 from homeassistant.components.device_tracker import (
+    ATTR_IN_ZONES,
     ATTR_SOURCE_TYPE,
+    ATTR_TRACKING_TYPE,
     DOMAIN as DT_DOMAIN,
     SourceType,
+    TrackingType,
 )
-
-# HA 2026.5 added in_zones attribute
-try:
-    from homeassistant.components.device_tracker import ATTR_IN_ZONES
-
-    TEST_FOR_IN_ZONES = True
-except ImportError:
-    TEST_FOR_IN_ZONES = False
-
-# HA 2026.7 added tracker_type attribute
-try:
-    from homeassistant.components.device_tracker import ATTR_TRACKING_TYPE, TrackingType
-
-    TEST_FOR_TRACKING_TYPE = True
-except ImportError:
-    TEST_FOR_TRACKING_TYPE = False
-
 from homeassistant.const import (
     ATTR_ATTRIBUTION,
     ATTR_ENTITY_PICTURE,
@@ -342,10 +327,8 @@ async def test_circles_members_no_loc(
         }
         if mem_info.entity_picture:
             expected_attrs[ATTR_ENTITY_PICTURE] = mem_info.entity_picture
-        if TEST_FOR_IN_ZONES:
-            expected_attrs[ATTR_IN_ZONES] = []
-        if TEST_FOR_TRACKING_TYPE:
-            expected_attrs[ATTR_TRACKING_TYPE] = TrackingType.POSITION
+        expected_attrs[ATTR_IN_ZONES] = []
+        expected_attrs[ATTR_TRACKING_TYPE] = TrackingType.POSITION
         assert state.attributes == expected_attrs
         # Check location is missing.
         assert not mem_info.loc

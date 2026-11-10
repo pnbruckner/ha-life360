@@ -1,5 +1,4 @@
 """Test Life360 config entry migration."""
-from __future__ import annotations
 
 from collections.abc import Generator
 import re

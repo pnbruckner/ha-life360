@@ -1,7 +1,5 @@
 """DataUpdateCoordinator for the Life360 integration."""
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import Callable, Coroutine, Iterable
 from contextlib import suppress
