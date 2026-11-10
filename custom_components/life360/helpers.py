@@ -1,7 +1,5 @@
 """Life360 helpers."""
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -17,8 +15,6 @@ from homeassistant.const import (
     CONF_ENABLED,
     CONF_PASSWORD,
     EVENT_HOMEASSISTANT_CLOSE,
-    MAJOR_VERSION,
-    MINOR_VERSION,
     UnitOfLength,
 )
 from homeassistant.core import Event, HomeAssistant
@@ -70,8 +66,6 @@ MemberID = NewType("MemberID", str)
 def get_session(hass: HomeAssistant) -> ClientSession:
     """Get a new ClientSession."""
     session = async_create_clientsession(hass, timeout=COMM_TIMEOUT)
-    if (MAJOR_VERSION, MINOR_VERSION) < (2026, 2):
-        return session
 
     # Starting in 2026.2, the SSLContext object seems to upset the Life360
     # server, or more likely, Cloudflare. Create a new connector with our own
@@ -258,7 +252,7 @@ class LocationData:
 
     details: LocationDetails
     battery_charging: bool = False
-    battery_level: int | None = None
+    battery_level: float | None = None
     wifi_on: bool = False
 
     @classmethod
@@ -278,7 +272,7 @@ class LocationData:
     @classmethod
     def from_server(cls, raw_loc: Mapping[str, Any]) -> Self:
         """Initialize from Member's location data from server."""
-        if (battery_level := int(float(raw_loc["battery"]))) < 0:
+        if (battery_level := float(raw_loc["battery"])) < 0:
             battery_level = None
         return cls(
             LocationDetails.from_server(raw_loc),

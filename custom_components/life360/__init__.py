@@ -1,7 +1,5 @@
 """Life360 integration."""
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import cast
@@ -39,7 +37,7 @@ from .helpers import Life360Store, MemberID
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 _LOGGER = logging.getLogger(__name__)
-_PLATFORMS = [Platform.BINARY_SENSOR, Platform.DEVICE_TRACKER]
+_PLATFORMS = [Platform.BINARY_SENSOR, Platform.DEVICE_TRACKER, Platform.SENSOR]
 
 _UPDATE_LOCATION_SCHEMA = vol.Schema(
     {
@@ -90,6 +88,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: L360ConfigEntry) -> bool
     mem_coordinator: dict[MemberID, MemberDataUpdateCoordinator] = {}
     entry.runtime_data = L360Coordinators(coordinator, mem_coordinator)
 
+    # TODO: Should this hold a lock to make sure one update finishes before another can
+    #       start?
+    #       Also, should the coordinator data be "snapshotted" and sent w/ the dispatch
+    #       to make sure data used by entities won't change in case the next update
+    #       starts before the entities finish updating?
     async def async_process_data() -> None:
         """Process Members."""
         mids = set(coordinator.data.mem_details)

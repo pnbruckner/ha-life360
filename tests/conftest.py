@@ -1,5 +1,4 @@
 """Life360 test configuration."""
-from __future__ import annotations
 
 from collections.abc import Callable, Generator, Iterable, Mapping
 from functools import partial

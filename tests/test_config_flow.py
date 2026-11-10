@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
+from custom_components.life360.const import DOMAIN
 from life360 import CommError, Life360Error, LoginError, RateLimited, Unauthorized
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -9,8 +10,6 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from homeassistant.config_entries import SOURCE_USER
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-
-from custom_components.life360.const import DOMAIN
 
 
 async def token_form(hass: HomeAssistant) -> dict:
@@ -137,7 +136,11 @@ async def test_password_login_reports_rate_limit(
     )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {"username": "parent@example.com", "password": "test-password", "enabled": True},
+        {
+            "username": "parent@example.com",
+            "password": "test-password",
+            "enabled": True,
+        },
     )
 
     assert result["step_id"] == "acct_username_password"

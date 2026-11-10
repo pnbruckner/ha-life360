@@ -1,7 +1,5 @@
 """Config flow for Life360 integration."""
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from typing import Any, cast, override
 

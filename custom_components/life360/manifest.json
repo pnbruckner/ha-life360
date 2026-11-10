@@ -1,6 +1,7 @@
 {
   "domain": "life360",
   "name": "Life360",
+  "categories": ["presence_location"],
   "codeowners": ["@pnbruckner"],
   "config_flow": true,
   "documentation": "https://github.com/pnbruckner/ha-life360/blob/0.10.4/README.md",

@@ -1,5 +1,4 @@
 """Life360 common test functions."""
-from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from datetime import datetime
