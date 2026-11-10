@@ -88,6 +88,11 @@
             "online": {
                 "name": "Life360 online ({acct_id})"
             }
+        },
+        "sensor": {
+            "bat_lvl": {
+                "name": "Life360 {name} battery level"
+            }
         }
     },
     "issues": {
