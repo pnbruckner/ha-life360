@@ -4,11 +4,11 @@
   "categories": ["presence_location"],
   "codeowners": ["@pnbruckner"],
   "config_flow": true,
-  "documentation": "https://github.com/pnbruckner/ha-life360/blob/0.10.4/README.md",
+  "documentation": "https://github.com/pnbruckner/ha-life360/blob/0.11.0/README.md",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/pnbruckner/ha-life360/issues",
   "loggers": ["life360"],
   "requirements": ["life360==7.2.0"],
   "single_config_entry": true,
-  "version": "0.10.4"
+  "version": "0.11.0"
 }
