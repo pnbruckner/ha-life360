@@ -1,23 +1,30 @@
 """Life360 Binary Sensor."""
 
 import asyncio
-from functools import partial
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
+from functools import partial
 from typing import cast, override
-
-from propcache.api import cached_property
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
+    BinarySensorEntityDescription,
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from propcache.api import cached_property
 
 from .const import ATTRIBUTION, SIGNAL_ACCT_STATUS
-from .coordinator import CirclesMembersDataUpdateCoordinator, L360ConfigEntry
-from .helpers import AccountID, ConfigOptions
+from .coordinator import (
+    CirclesMembersDataUpdateCoordinator,
+    L360ConfigEntry,
+    MemberDataUpdateCoordinator,
+)
+from .entity import Life360MemberEntity, setup_member_entities
+from .helpers import AccountID, ConfigOptions, MemberData, MemberID
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,6 +61,16 @@ async def async_setup_entry(
 
     await process_config(hass, entry)
     entry.async_on_unload(entry.add_update_listener(process_config))
+
+    # Per-Member binary sensors.
+    setup_member_entities(
+        hass,
+        entry,
+        async_add_entities,
+        lambda crd, mid: [
+            Life360MemberBinarySensor(crd, mid, desc) for desc in MEMBER_SENSORS
+        ],
+    )
 
 
 class Life360BinarySensor(BinarySensorEntity):
@@ -123,4 +140,82 @@ class Life360BinarySensor(BinarySensorEntity):
             return
 
         self._enabled = not self._enabled
+        self.async_write_ha_state()
+
+
+def _driving(data: MemberData, options: ConfigOptions) -> bool | None:
+    """Return if driving, honoring the "driving speed threshold" option."""
+    if not data.loc:
+        return None
+    if (
+        options.driving_speed is not None
+        and data.loc.details.speed >= options.driving_speed
+    ):
+        return True
+    return data.loc.details.driving
+
+
+@dataclass(frozen=True, kw_only=True)
+class Life360MemberBinarySensorDescription(BinarySensorEntityDescription):
+    """Life360 per-Member binary sensor description."""
+
+    value_fn: Callable[[MemberData, ConfigOptions], bool | None]
+
+
+MEMBER_SENSORS: tuple[Life360MemberBinarySensorDescription, ...] = (
+    Life360MemberBinarySensorDescription(
+        key="drv",
+        translation_key="drv",
+        icon="mdi:car",
+        value_fn=_driving,
+    ),
+    Life360MemberBinarySensorDescription(
+        key="bat_chg",
+        translation_key="bat_chg",
+        device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
+        value_fn=lambda d, _: d.loc.battery_charging if d.loc else None,
+    ),
+    Life360MemberBinarySensorDescription(
+        key="wifi_on",
+        translation_key="wifi_on",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        value_fn=lambda d, _: d.loc.wifi_on if d.loc else None,
+    ),
+)
+
+
+class Life360MemberBinarySensor(Life360MemberEntity, BinarySensorEntity):
+    """Life360 per-Member binary sensor."""
+
+    entity_description: Life360MemberBinarySensorDescription
+
+    def __init__(
+        self,
+        coordinator: MemberDataUpdateCoordinator,
+        mid: MemberID,
+        description: Life360MemberBinarySensorDescription,
+    ) -> None:
+        """Initialize binary sensor."""
+        super().__init__(coordinator, mid, description.key)
+        self.entity_description = description
+        self._options = ConfigOptions.from_dict(coordinator.config_entry.options)
+        self.async_on_remove(
+            coordinator.config_entry.add_update_listener(
+                self._async_config_entry_updated
+            )
+        )
+
+    @property
+    @override
+    def is_on(self) -> bool | None:
+        """Return if sensor is on."""
+        return self.entity_description.value_fn(self.member_data, self._options)
+
+    async def _async_config_entry_updated(
+        self, _: HomeAssistant, entry: L360ConfigEntry
+    ) -> None:
+        """Re-evaluate when options (e.g., driving speed threshold) change."""
+        if self._options == (new_options := ConfigOptions.from_dict(entry.options)):
+            return
+        self._options = new_options
         self.async_write_ha_state()

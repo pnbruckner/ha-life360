@@ -28,7 +28,7 @@ jobs:
           ignore: brands
 
   validate-pytest:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: With pytest
     needs:
       - validate-hassfest

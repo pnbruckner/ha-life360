@@ -44,6 +44,7 @@ from .const import (
     STATE_DRIVING,
 )
 from .coordinator import L360ConfigEntry, MemberDataUpdateCoordinator
+from .entity import member_device_info
 from .helpers import ConfigOptions, MemberData, MemberID, NoLocReason
 
 _LOGGER = logging.getLogger(__name__)
@@ -131,6 +132,7 @@ class Life360DeviceTracker(
         self._options = ConfigOptions.from_dict(coordinator.config_entry.options)
         self._prev_data = self._data = deepcopy(coordinator.data)
         self._update_basic_attrs()
+        self._attr_device_info = member_device_info(mid, self._data.details.name)
         self._ignored_update_reasons: list[str] = []
 
         if self._data.loc:
