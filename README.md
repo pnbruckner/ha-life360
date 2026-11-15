@@ -163,6 +163,36 @@ Copy the value from LIFE360_AUTH_TOKEN and enter it into the corresponding box o
 (Note that the "Token type" is almost certainly "Bearer", so leave that default value as-is.)
 You can put whatever you want in the "Account identifier" box.
 
+## Member Entities
+
+Each Life360 Member has a device tracker and ten metric entities,
+grouped together under the same Home Assistant device.
+
+| Domain | Metric |
+| --- | --- |
+| `sensor` | Battery level |
+| `sensor` | Speed |
+| `sensor` | GPS accuracy |
+| `sensor` | Address |
+| `sensor` | Place |
+| `sensor` | At location since |
+| `sensor` | Last seen |
+| `binary_sensor` | Driving |
+| `binary_sensor` | Battery charging |
+| `binary_sensor` | Wi-Fi connected |
+
+The battery level sensor was introduced in version 0.11.0.
+This enhancement adds the other nine metrics while retaining the
+existing battery sensor's unique ID.
+
+These entities use the existing per-member update coordinators.
+They do not make additional Life360 API requests.
+
+Metric values may be unavailable when Life360 has not supplied the
+corresponding location information. Speed and distance values follow
+Home Assistant's unit settings. The driving binary sensor respects
+the configured driving speed threshold.
+
 ## Versions
 
 This custom integration supports HomeAssistant versions 2026.7 or newer.
