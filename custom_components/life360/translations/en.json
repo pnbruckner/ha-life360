@@ -87,11 +87,38 @@
         "binary_sensor": {
             "online": {
                 "name": "Life360 online ({acct_id})"
+            },
+            "wifi_on": {
+                "name": "Wi-Fi"
+            },
+            "drv": {
+                "name": "Driving"
+            },
+            "bat_chg": {
+                "name": "Charging"
             }
         },
         "sensor": {
             "bat_lvl": {
-                "name": "Life360 {name} battery level"
+                "name": "battery level"
+            },
+            "spd": {
+                "name": "Speed"
+            },
+            "gps_acc": {
+                "name": "GPS accuracy"
+            },
+            "addr": {
+                "name": "Address"
+            },
+            "plc": {
+                "name": "Place"
+            },
+            "loc_since": {
+                "name": "At location since"
+            },
+            "last_seen": {
+                "name": "Last seen"
             }
         }
     },
